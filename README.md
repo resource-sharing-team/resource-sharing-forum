@@ -8,6 +8,7 @@
 - Spring Boot 3.3
 - Spring Web / Validation / Security
 - MySQL 8.x
+- Spring JDBC / Flyway
 - JWT 鉴权
 - Maven Wrapper
 
@@ -29,10 +30,13 @@ Invoke-RestMethod http://localhost:8080/api/health
 
 ## 数据库
 
-数据库初始化脚本位于：
+数据库采用 V2 工程化模型，核心脚本位于：
 
 - `backend/src/main/resources/schema.sql`
 - `backend/src/main/resources/data.sql`
+- `backend/src/main/resources/db/migration/V1__create_v2_schema.sql`
+- `backend/src/main/resources/db/migration/V2__seed_v2_data.sql`
+- `backend/README_DATABASE.md`
 
 开发环境建议创建 MySQL 数据库：
 
@@ -40,7 +44,12 @@ Invoke-RestMethod http://localhost:8080/api/health
 CREATE DATABASE resource_sharing_forum DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ```
 
-然后根据 `backend/src/main/resources/application.yml` 修改本地账号密码。
+后端启动时通过 Flyway 自动迁移数据库。账号密码通过环境变量配置：
+
+```powershell
+$env:DB_USERNAME = "root"
+$env:DB_PASSWORD = "你的MySQL密码"
+```
 
 ## 接口模块
 
