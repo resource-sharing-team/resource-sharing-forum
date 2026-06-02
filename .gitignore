@@ -1,0 +1,21 @@
+/.idea/
+/.vscode/
+/*.iml
+
+# Course/source materials kept local
+/原型/
+/*.zip
+/*.pdf
+/*.docx
+/王佳乐_复杂版UML序列图_图片与源码/
+/我的UML类图_图片与源码/
+
+# Backend build/runtime
+/backend/target/
+/backend/.mvn/wrapper/apache-maven-*/
+/backend/.mvn/wrapper/apache-maven-*.zip
+/backend/uploads/
+/backend/logs/
+/backend/.env
+/backend/*.log
+

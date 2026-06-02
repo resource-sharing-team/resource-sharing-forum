@@ -1,0 +1,34 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: resource-sharing-forum-backend
+  profiles:
+    active: dev
+  servlet:
+    multipart:
+      max-file-size: 100MB
+      max-request-size: 500MB
+
+forum:
+  jwt:
+    secret: resource-sharing-forum-dev-secret-must-be-changed-2026
+    expires-minutes: 120
+  upload:
+    root-dir: ./uploads
+    allowed-types: pdf,doc,docx,ppt,pptx,xls,xlsx,zip,rar,7z,png,jpg,txt,md
+    max-file-size-mb: 100
+    max-files-per-resource: 5
+
+---
+spring:
+  config:
+    activate:
+      on-profile: dev
+  datasource:
+    url: jdbc:mysql://localhost:3306/resource_sharing_forum?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: root
+    password: root
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
