@@ -1,6 +1,7 @@
 /.idea/
 /.vscode/
 /*.iml
+/.worktrees/
 
 # Course/source materials kept local
 /原型/

@@ -26,10 +26,11 @@ ON DUPLICATE KEY UPDATE
 INSERT INTO user_account (
     id, username, email, password_hash, role, status
 ) VALUES
-    (1, 'demo_user', 'demo@example.com', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', 'USER', 'NORMAL'),
-    (2, 'admin', 'admin@example.com', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', 'ADMIN', 'NORMAL')
+    (1, 'demo_user', 'demo@example.com', '$2a$10$J2N3JOui3Jy3/dqeh3zHFOL9OPovGg9AVXAz2HbhfNz.a7XuMu5se', 'USER', 'NORMAL'),
+    (2, 'admin', 'admin@example.com', '$2a$10$J2N3JOui3Jy3/dqeh3zHFOL9OPovGg9AVXAz2HbhfNz.a7XuMu5se', 'ADMIN', 'NORMAL')
 ON DUPLICATE KEY UPDATE
     email = VALUES(email),
+    password_hash = VALUES(password_hash),
     role = VALUES(role),
     status = VALUES(status);
 
