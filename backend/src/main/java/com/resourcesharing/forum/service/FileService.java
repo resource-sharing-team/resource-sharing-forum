@@ -45,7 +45,7 @@ public class FileService {
     public FileService(
             ObjectProvider<JdbcTemplate> jdbcProvider,
             @Value("${forum.upload.root-dir:./uploads}") String rootDir,
-            @Value("${forum.upload.allowed-types:pdf,doc,docx,ppt,pptx,xls,xlsx,zip,rar,7z,png,jpg,txt,md}") String allowedTypes,
+            @Value("${forum.upload.allowed-types:pdf,doc,docx,ppt,pptx,xls,xlsx,zip,rar,7z,png,jpg,jpeg,txt,md}") String allowedTypes,
             @Value("${forum.upload.max-file-size-mb:100}") long maxFileSizeMb
     ) {
         this.jdbcProvider = jdbcProvider;
@@ -63,6 +63,7 @@ public class FileService {
         if (jdbc == null) {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, "文件服务需要数据库连接");
         }
+        requireNormalAccount(jdbc, accountId);
         validateFile(file);
         Long ownerId = resourceId == null ? 0L : resourceId;
         if (resourceId != null) {
@@ -132,12 +133,16 @@ public class FileService {
         if (jdbc == null) {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, "文件服务需要数据库连接");
         }
+        requireNormalAccount(jdbc, accountId);
         ensureResourceWritable(resourceId, accountId);
-        jdbc.update("""
+        int updated = jdbc.update("""
                 UPDATE file_attachment
-                SET owner_id = ?, status = 'NORMAL'
+                SET owner_id = ?, status = 'NORMAL', update_time = NOW(3)
                 WHERE id = ? AND uploader_id = ? AND owner_type = 'RESOURCE' AND status = 'TEMP' AND deleted_at IS NULL
                 """, resourceId, attachmentId, accountId);
+        if (updated == 0) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "附件不存在或不可绑定");
+        }
         return jdbc.queryForObject("""
                 SELECT id, owner_id, original_file_name, file_ext, file_size, status
                 FROM file_attachment
@@ -152,6 +157,20 @@ public class FileService {
         ), attachmentId);
     }
 
+    private void requireNormalAccount(JdbcTemplate jdbc, Long accountId) {
+        if (accountId == null) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "请先登录后再上传文件");
+        }
+        Integer count = jdbc.queryForObject("""
+                SELECT COUNT(*)
+                FROM user_account
+                WHERE id = ? AND status = 'NORMAL' AND deleted_at IS NULL
+                """, Integer.class, accountId);
+        if (count == null || count == 0) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "账号不存在或已被禁用");
+        }
+    }
+
     private void ensureResourceWritable(Long resourceId, Long accountId) {
         JdbcTemplate jdbc = jdbc();
         if (jdbc == null) {
@@ -162,7 +181,7 @@ public class FileService {
                 FROM resource_info r
                 JOIN member_profile mp ON mp.id = r.publisher_id
                 JOIN user_account ua ON ua.id = mp.account_id
-                WHERE r.id = ? AND r.deleted_at IS NULL
+                WHERE r.id = ? AND r.deleted_at IS NULL AND r.status IN ('DRAFT', 'REJECTED', 'PENDING_REVIEW')
                   AND (ua.id = ? OR EXISTS (
                       SELECT 1 FROM user_account admin
                       WHERE admin.id = ? AND admin.role IN ('ADMIN', 'SUPER_ADMIN', 'AUDITOR') AND admin.status = 'NORMAL'

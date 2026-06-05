@@ -6,9 +6,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.web.servlet.MockMvc;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -46,6 +48,37 @@ class ApiSmokeTests {
     @Test
     void protectedEndpointRequiresToken() throws Exception {
         mockMvc.perform(get("/api/v1/user/profile"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void writeEndpointsRequireAuthentication() throws Exception {
+        mockMvc.perform(post("/api/v1/resources")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"未登录资源\",\"description\":\"未登录不能发布资源\"}"))
+                .andExpect(status().isUnauthorized());
+
+        mockMvc.perform(post("/api/v1/comments")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"targetType\":\"RESOURCE\",\"targetId\":1,\"content\":\"未登录评论\"}"))
+                .andExpect(status().isUnauthorized());
+
+        mockMvc.perform(post("/api/v1/reports")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"targetType\":\"RESOURCE\",\"targetId\":1,\"reason\":\"未登录举报\"}"))
+                .andExpect(status().isUnauthorized());
+
+        MockMultipartFile file = new MockMultipartFile("file", "note.txt", "text/plain", "content".getBytes());
+        mockMvc.perform(multipart("/api/v1/attachments/upload").file(file))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void notificationEndpointsRequireAuthentication() throws Exception {
+        mockMvc.perform(get("/api/v1/notifications"))
+                .andExpect(status().isUnauthorized());
+
+        mockMvc.perform(post("/api/v1/notifications/1/read"))
                 .andExpect(status().isUnauthorized());
     }
 

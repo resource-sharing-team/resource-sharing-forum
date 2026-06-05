@@ -42,7 +42,7 @@ public class AdminResourceController {
             @RequestBody(required = false) Map<String, Object> request,
             Authentication authentication
     ) {
-        String reason = request == null || request.get("reason") == null ? "审核驳回" : String.valueOf(request.get("reason"));
+        String reason = request == null || request.get("reason") == null ? "瀹℃牳椹冲洖" : String.valueOf(request.get("reason"));
         return ApiResponse.success(adminResourceService.review(new ReviewRequest(id, false, reason), accountId(authentication)));
     }
 
@@ -78,12 +78,12 @@ public class AdminResourceController {
 
     private static Long accountId(Authentication authentication) {
         if (authentication == null || authentication.getName() == null) {
-            return 1L;
+            return null;
         }
         try {
             return Long.parseLong(authentication.getName());
         } catch (NumberFormatException ignored) {
-            return 1L;
+            return null;
         }
     }
 }

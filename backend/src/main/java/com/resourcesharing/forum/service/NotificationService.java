@@ -28,7 +28,7 @@ public class NotificationService {
         if (jdbc == null) {
             return new PageResult<>(0, java.util.List.of(), page, size);
         }
-        Long memberId = memberId(accountId);
+        Long memberId = requireMemberId(accountId);
         long total = jdbc.queryForObject("""
                 SELECT COUNT(*)
                 FROM system_notice
@@ -59,7 +59,7 @@ public class NotificationService {
         if (jdbc == null) {
             return 0;
         }
-        Long memberId = memberId(accountId);
+        Long memberId = requireMemberId(accountId);
         Integer count = jdbc.queryForObject("""
                 SELECT COUNT(*)
                 FROM system_notice
@@ -73,7 +73,7 @@ public class NotificationService {
         if (jdbc == null) {
             return;
         }
-        Long memberId = memberId(accountId);
+        Long memberId = requireMemberId(accountId);
         int updated = jdbc.update("""
                 UPDATE system_notice
                 SET is_read = 1, read_time = COALESCE(read_time, NOW(3))
@@ -89,7 +89,7 @@ public class NotificationService {
         if (jdbc == null) {
             return;
         }
-        Long memberId = memberId(accountId);
+        Long memberId = requireMemberId(accountId);
         jdbc.update("""
                 UPDATE system_notice
                 SET is_read = 1, read_time = COALESCE(read_time, NOW(3))
@@ -127,15 +127,24 @@ public class NotificationService {
                 """, eventId, receiverMemberId, type, title, content, targetType, targetId);
     }
 
-    private Long memberId(Long accountId) {
+    private Long requireMemberId(Long accountId) {
+        if (accountId == null) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "请先登录后再查看通知");
+        }
         JdbcTemplate jdbc = jdbc();
         if (jdbc == null) {
             return 1L;
         }
         try {
-            return jdbc.queryForObject("SELECT id FROM member_profile WHERE account_id = ? AND deleted_at IS NULL", Long.class, accountId);
+            return jdbc.queryForObject("""
+                    SELECT mp.id
+                    FROM member_profile mp
+                    JOIN user_account ua ON ua.id = mp.account_id
+                    WHERE mp.account_id = ? AND mp.deleted_at IS NULL
+                      AND ua.status = 'NORMAL' AND ua.deleted_at IS NULL
+                    """, Long.class, accountId);
         } catch (Exception exception) {
-            throw new BusinessException(ErrorCode.UNAUTHORIZED, "账号不是会员或不存在");
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "账号不是正常会员或不存在");
         }
     }
 

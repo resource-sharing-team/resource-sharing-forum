@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -36,9 +37,11 @@ class DesignSpecMySqlIntegrationTests {
             .withPassword("forum");
 
     private final MockMvc mockMvc;
+    private final JdbcTemplate jdbcTemplate;
 
-    DesignSpecMySqlIntegrationTests(MockMvc mockMvc) {
+    DesignSpecMySqlIntegrationTests(MockMvc mockMvc, JdbcTemplate jdbcTemplate) {
         this.mockMvc = mockMvc;
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     @DynamicPropertySource
@@ -63,6 +66,47 @@ class DesignSpecMySqlIntegrationTests {
                 .andExpect(jsonPath("$.code").value(201))
                 .andExpect(jsonPath("$.data.token").exists())
                 .andExpect(jsonPath("$.data.user.username").value(username));
+
+        Integer linkedRows = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM user_account ua
+                JOIN member_profile mp ON mp.account_id = ua.id
+                JOIN member_point_account mpa ON mpa.member_id = mp.id
+                JOIN point_flow pf ON pf.member_id = mp.id AND pf.scene = 'REGISTER'
+                WHERE ua.username = ?
+                """, Integer.class, username);
+        org.assertj.core.api.Assertions.assertThat(linkedRows).isEqualTo(1);
+    }
+
+    @Test
+    void loginFailureAccumulatesAndLocksAccount() throws Exception {
+        String username = "lock_" + UUID.randomUUID().toString().replace("-", "").substring(0, 10);
+        mockMvc.perform(post("/api/v1/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"username":"%s","email":"%s@example.com","password":"abc123456"}
+                                """.formatted(username, username)))
+                .andExpect(status().isCreated());
+
+        for (int i = 0; i < 5; i++) {
+            mockMvc.perform(post("/api/v1/auth/login")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {"account":"%s","password":"wrong-password"}
+                                    """.formatted(username)))
+                    .andExpect(status().isUnauthorized());
+        }
+
+        mockMvc.perform(post("/api/v1/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"account":"%s","password":"abc123456"}
+                                """.formatted(username)))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.message").value("账号临时锁定"));
+
+        Integer failed = jdbcTemplate.queryForObject("SELECT failed_login_count FROM user_account WHERE username = ?", Integer.class, username);
+        org.assertj.core.api.Assertions.assertThat(failed).isGreaterThanOrEqualTo(5);
     }
 
     @Test
@@ -91,6 +135,16 @@ class DesignSpecMySqlIntegrationTests {
                         .header("Authorization", "Bearer " + memberToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.count", greaterThanOrEqualTo(1)));
+
+        mockMvc.perform(post("/api/v1/notifications/read-all")
+                        .header("Authorization", "Bearer " + memberToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200));
+
+        mockMvc.perform(get("/api/v1/notifications/unread-count")
+                        .header("Authorization", "Bearer " + memberToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.count").value(0));
     }
 
     @Test
@@ -102,6 +156,39 @@ class DesignSpecMySqlIntegrationTests {
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value(400));
+    }
+
+    @Test
+    void uploadAcceptsSafeFileAndDoesNotExposeStoragePath() throws Exception {
+        String token = loginToken("demo_user", "123456");
+        MockMultipartFile file = new MockMultipartFile("file", "note.txt", "text/plain", "hello".getBytes());
+        mockMvc.perform(multipart("/api/v1/attachments/upload")
+                        .file(file)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.fileName").value("note.txt"))
+                .andExpect(jsonPath("$.data.storagePath").doesNotExist())
+                .andExpect(jsonPath("$.data.filePath").doesNotExist());
+    }
+
+    @Test
+    void v5MigrationAddsIntegrityColumns() {
+        Integer appealColumn = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM information_schema.columns
+                WHERE table_schema = DATABASE()
+                  AND table_name = 'appeal_record'
+                  AND column_name = 'pending_target_key'
+                """, Integer.class);
+        Integer reportColumn = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM information_schema.columns
+                WHERE table_schema = DATABASE()
+                  AND table_name = 'report_complaint'
+                  AND column_name = 'active_report_key'
+                """, Integer.class);
+        org.assertj.core.api.Assertions.assertThat(appealColumn).isEqualTo(1);
+        org.assertj.core.api.Assertions.assertThat(reportColumn).isEqualTo(1);
     }
 
     private String loginToken(String account, String password) throws Exception {

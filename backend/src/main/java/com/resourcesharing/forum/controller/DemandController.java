@@ -49,12 +49,12 @@ public class DemandController {
 
     private static Long accountId(Authentication authentication) {
         if (authentication == null || authentication.getName() == null) {
-            return 1L;
+            return null;
         }
         try {
             return Long.parseLong(authentication.getName());
         } catch (NumberFormatException ignored) {
-            return 1L;
+            return null;
         }
     }
 

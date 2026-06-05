@@ -71,34 +71,48 @@ public class DesignSpecForumService {
         }
         try {
             Map<String, Object> row = jdbc.queryForObject("""
-                    SELECT id, username, email, password_hash, role, status
+                    SELECT id, username, email, password_hash, role, status, failed_login_count, locked_until
                     FROM user_account
                     WHERE (username = ? OR email = ?) AND deleted_at IS NULL
+                    FOR UPDATE
                     """, (rs, rowNum) -> map(
                     "id", rs.getLong("id"),
                     "username", rs.getString("username"),
                     "email", rs.getString("email"),
                     "passwordHash", rs.getString("password_hash"),
                     "role", rs.getString("role"),
-                    "status", rs.getString("status")
+                    "status", rs.getString("status"),
+                    "failedLoginCount", rs.getInt("failed_login_count"),
+                    "lockedUntil", rs.getObject("locked_until", LocalDateTime.class)
             ), account, account);
-            if (row == null || !"NORMAL".equals(row.get("status"))) {
-                throw new BusinessException(ErrorCode.UNAUTHORIZED, "账号不可用");
+            Long accountId = number(row.get("id"), DEFAULT_ACCOUNT_ID);
+            if (!"NORMAL".equals(row.get("status"))) {
+                recordLogin(jdbc, accountId, account, "FAILED", "ACCOUNT_DISABLED");
+                throw new BusinessException(ErrorCode.UNAUTHORIZED, "账号已被禁用");
+            }
+            LocalDateTime lockedUntil = (LocalDateTime) row.get("lockedUntil");
+            if (lockedUntil != null && lockedUntil.isAfter(LocalDateTime.now())) {
+                recordLogin(jdbc, accountId, account, "FAILED", "ACCOUNT_LOCKED");
+                throw new BusinessException(ErrorCode.UNAUTHORIZED, "账号临时锁定");
             }
             String hash = String.valueOf(row.get("passwordHash"));
             if (!passwordEncoder.matches(password, hash)) {
-                throw new BusinessException(ErrorCode.UNAUTHORIZED, "账号或密码错误");
+                int nextFailCount = (int) number(row.get("failedLoginCount"), 0L).longValue() + 1;
+                jdbc.update("""
+                        UPDATE user_account
+                        SET failed_login_count = ?,
+                            locked_until = IF(? >= 5, DATE_ADD(NOW(3), INTERVAL 10 MINUTE), locked_until)
+                        WHERE id = ?
+                        """, nextFailCount, nextFailCount, accountId);
+                recordLogin(jdbc, accountId, account, "FAILED", "PASSWORD_ERROR");
+                throw new BusinessException(ErrorCode.UNAUTHORIZED, nextFailCount >= 5 ? "账号临时锁定" : "账号或密码错误");
             }
-            Long accountId = number(row.get("id"), DEFAULT_ACCOUNT_ID);
             jdbc.update("""
                     UPDATE user_account
-                    SET failed_login_count = 0, last_login_time = NOW(3)
+                    SET failed_login_count = 0, locked_until = NULL, last_login_time = NOW(3)
                     WHERE id = ?
                     """, accountId);
-            jdbc.update("""
-                    INSERT INTO login_record(account_id, login_account, result)
-                    VALUES (?, ?, 'SUCCESS')
-                    """, accountId, account);
+            recordLogin(jdbc, accountId, account, "SUCCESS", null);
             return tokenResponse(userProfile(accountId), roleForToken(String.valueOf(row.get("role"))));
         } catch (BusinessException exception) {
             throw exception;
@@ -143,6 +157,12 @@ public class DesignSpecForumService {
                     INSERT INTO member_point_account(member_id, level_id, current_points, frozen_points, total_earned_points, total_spent_points)
                     VALUES (?, 1, 0, 0, 0, 0)
                     """, memberId);
+            jdbc.update("""
+                    INSERT INTO point_flow(member_id, flow_type, scene, points_change, frozen_change,
+                                           before_points, after_points, before_frozen_points, after_frozen_points,
+                                           related_type, related_id, operator_id, description)
+                    VALUES (?, 'EARN', 'REGISTER', 0, 0, 0, 0, 0, 0, 'USER_ACCOUNT', ?, ?, '注册初始化积分账户')
+                    """, memberId, accountId, accountId);
             return tokenResponse(userProfile(accountId), "MEMBER");
         });
     }
@@ -366,7 +386,7 @@ public class DesignSpecForumService {
             return resource;
         }
         return inTransaction(() -> {
-            Long memberId = memberId(accountId);
+            Long memberId = requireMemberId(accountId);
             Long categoryId = number(firstPresent(request, "categoryId", "category2"), 11L);
             String title = firstNonBlank(value(request, "title", ""), "新资源发布");
             String summary = firstNonBlank(value(request, "summary", ""), value(request, "description", ""), "资源简介");
@@ -421,6 +441,9 @@ public class DesignSpecForumService {
             return;
         }
         inTransaction(() -> {
+            if (accountId == null) {
+                throw new BusinessException(ErrorCode.UNAUTHORIZED, "请先登录后再删除资源");
+            }
             Map<String, Object> before = jdbc.queryForObject("""
                     SELECT r.status, r.publisher_id, ua.role
                     FROM resource_info r
@@ -432,8 +455,8 @@ public class DesignSpecForumService {
                     "publisherId", rs.getLong("publisher_id"),
                     "role", rs.getString("role")
             ), accountId, resourceId);
-            Long memberId = memberId(accountId);
             boolean admin = List.of("ADMIN", "SUPER_ADMIN", "AUDITOR").contains(String.valueOf(before.get("role")));
+            Long memberId = admin ? null : requireMemberId(accountId);
             if (!admin && !Objects.equals(number(before.get("publisherId"), 0L), memberId)) {
                 throw new BusinessException(ErrorCode.FORBIDDEN, "无权删除该资源");
             }
@@ -582,7 +605,7 @@ public class DesignSpecForumService {
             return resource(resourceId, accountId);
         }
         return inTransaction(() -> {
-            Long memberId = memberId(accountId);
+            Long memberId = requireMemberId(accountId);
             Map<String, Object> before = jdbc.queryForObject("""
                     SELECT status FROM resource_info
                     WHERE id = ? AND publisher_id = ? AND deleted_at IS NULL
@@ -607,7 +630,7 @@ public class DesignSpecForumService {
             return resource(resourceId, accountId);
         }
         return inTransaction(() -> {
-            Long memberId = memberId(accountId);
+            Long memberId = requireMemberId(accountId);
             Map<String, Object> before = jdbc.queryForObject("""
                     SELECT status FROM resource_info
                     WHERE id = ? AND publisher_id = ? AND deleted_at IS NULL
@@ -631,7 +654,7 @@ public class DesignSpecForumService {
         if (jdbc == null) {
             return defaultResource();
         }
-        Long memberId = memberId(accountId);
+        Long memberId = requireMemberId(accountId);
         String actionType = "favorite".equalsIgnoreCase(action) ? "FAVORITE" : "LIKE";
         String column = "FAVORITE".equals(actionType) ? "favorite_count" : "like_count";
         jdbc.update("""
@@ -659,7 +682,7 @@ public class DesignSpecForumService {
             return resource;
         }
         return inTransaction(() -> {
-            Long memberId = memberId(accountId);
+            Long memberId = requireMemberId(accountId);
             Integer downloaded = jdbc.queryForObject("""
                     SELECT COUNT(*) FROM download_record
                     WHERE member_id = ? AND resource_id = ? AND status = 'SUCCESS'
@@ -687,7 +710,7 @@ public class DesignSpecForumService {
             return map("recordId", 1L, "fileName", "demo.zip", "downloadUrl", "/api/v1/attachments/" + attachmentId + "/download");
         }
         return inTransaction(() -> {
-            Long memberId = memberId(accountId);
+            Long memberId = requireMemberId(accountId);
             Map<String, Object> attachment = jdbc.queryForObject("""
                     SELECT fa.id, fa.original_file_name, fa.owner_id AS resource_id, r.status
                     FROM file_attachment fa
@@ -773,7 +796,7 @@ public class DesignSpecForumService {
             return defaultRequest();
         }
         return inTransaction(() -> {
-            Long memberId = memberId(accountId);
+            Long memberId = requireMemberId(accountId);
             int reward = Math.max(0, (int) number(firstPresent(request, "rewardPoints", "points"), 0L).longValue());
             if (reward > 0) {
                 freezePoints(jdbc, memberId, accountId, reward, null);
@@ -825,7 +848,7 @@ public class DesignSpecForumService {
             return;
         }
         inTransaction(() -> {
-            Long memberId = memberId(accountId);
+            Long memberId = requireMemberId(accountId);
             Map<String, Object> row = jdbc.queryForObject("SELECT requester_id, reward_points, status FROM request_post WHERE id = ? FOR UPDATE",
                     (rs, rowNum) -> map("requesterId", rs.getLong("requester_id"), "reward", rs.getInt("reward_points"), "status", rs.getString("status")), requestId);
             if (!Objects.equals(number(row.get("requesterId"), 0L), memberId)) {
@@ -876,7 +899,7 @@ public class DesignSpecForumService {
             return map("id", 1L, "requestId", requestId, "content", value(request, "content", ""), "accepted", false);
         }
         return inTransaction(() -> {
-            Long memberId = memberId(accountId);
+            Long memberId = requireMemberId(accountId);
             Map<String, Object> post = jdbc.queryForObject("SELECT requester_id, status FROM request_post WHERE id = ? FOR UPDATE",
                     (rs, rowNum) -> map("requesterId", rs.getLong("requester_id"), "status", rs.getString("status")), requestId);
             if ("ONGOING".equals(post.get("status")) && Objects.equals(number(post.get("requesterId"), 0L), memberId)) {
@@ -915,7 +938,7 @@ public class DesignSpecForumService {
             return map("id", requestId, "status", "RESOLVED");
         }
         return inTransaction(() -> {
-            Long memberId = memberId(accountId);
+            Long memberId = requireMemberId(accountId);
             Long replyId = number(firstPresent(request, "replyId", "answerId"), 0L);
             Map<String, Object> post = jdbc.queryForObject("SELECT requester_id, reward_points, status, accepted_reply_id FROM request_post WHERE id = ? FOR UPDATE",
                     (rs, rowNum) -> map("requesterId", rs.getLong("requester_id"), "reward", rs.getInt("reward_points"), "status", rs.getString("status"), "acceptedReplyId", rs.getObject("accepted_reply_id")), requestId);
@@ -976,7 +999,7 @@ public class DesignSpecForumService {
                 UPDATE comment_info
                 SET content = ?
                 WHERE id = ? AND member_id = ? AND status = 'ACTIVE'
-                """, value(request, "content", ""), commentId, memberId(accountId));
+                """, value(request, "content", ""), commentId, requireMemberId(accountId));
         return comment(commentId, accountId);
     }
 
@@ -989,7 +1012,7 @@ public class DesignSpecForumService {
                 UPDATE comment_info
                 SET status = 'DELETED', deleted_at = NOW(3)
                 WHERE id = ? AND member_id = ? AND status = 'ACTIVE'
-                """, commentId, memberId(accountId));
+                """, commentId, requireMemberId(accountId));
     }
 
     public Map<String, Object> likeComment(Long commentId, Long accountId) {
@@ -997,7 +1020,7 @@ public class DesignSpecForumService {
         if (jdbc == null) {
             return map("id", commentId, "liked", true);
         }
-        Long memberId = memberId(accountId);
+        Long memberId = requireMemberId(accountId);
         jdbc.update("""
                 INSERT INTO user_interaction(member_id, target_type, target_id, action_type, status)
                 VALUES (?, 'COMMENT', ?, 'LIKE', 'ACTIVE')
@@ -1017,7 +1040,7 @@ public class DesignSpecForumService {
                     INSERT INTO report_complaint(reporter_id, report_type, target_type, target_id, title, reason, proof_summary, contact_email, status)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
                     """, Statement.RETURN_GENERATED_KEYS);
-            statement.setLong(1, memberId(accountId));
+            statement.setLong(1, requireMemberId(accountId));
             String targetType = reportTarget(value(request, "targetType", value(request, "target", "RESOURCE")));
             statement.setString(2, reportType(value(request, "type", "RESOURCE"), targetType));
             statement.setString(3, targetType);
@@ -1042,7 +1065,7 @@ public class DesignSpecForumService {
                     INSERT INTO appeal_record(appellant_id, target_type, target_id, related_report_id, reason, status)
                     VALUES (?, ?, ?, ?, ?, 'PENDING')
                     """, Statement.RETURN_GENERATED_KEYS);
-            statement.setLong(1, memberId(accountId));
+            statement.setLong(1, requireMemberId(accountId));
             statement.setString(2, firstNonBlank(value(request, "targetType", ""), "RESOURCE"));
             statement.setLong(3, number(firstPresent(request, "targetId"), 0L));
             Long reportId = number(firstPresent(request, "relatedReportId"), 0L);
@@ -1527,7 +1550,7 @@ public class DesignSpecForumService {
             return map("id", 1L, "targetType", targetType, "targetId", targetId, "author", "demo_user", "content", content, "date", today(), "mine", true);
         }
         return inTransaction(() -> {
-            Long memberId = memberId(accountId);
+            Long memberId = requireMemberId(accountId);
             KeyHolder keyHolder = new GeneratedKeyHolder();
             jdbc.update(connection -> {
                 PreparedStatement statement = connection.prepareStatement("""
@@ -1943,27 +1966,64 @@ public class DesignSpecForumService {
                 """, (rs, rowNum) -> map("current", rs.getInt("current_points"), "frozen", rs.getInt("frozen_points")), memberId);
     }
 
+    private void recordLogin(JdbcTemplate jdbc, Long accountId, String loginAccount, String result, String failReason) {
+        jdbc.update("""
+                INSERT INTO login_record(account_id, login_account, result, fail_reason)
+                VALUES (?, ?, ?, ?)
+                """, accountId, loginAccount, result, failReason);
+    }
+
     private Long memberId(Long accountId) {
         JdbcTemplate jdbc = jdbc();
-        if (jdbc == null || accountId == null) {
+        if (accountId == null) {
+            return null;
+        }
+        if (jdbc == null) {
             return DEFAULT_MEMBER_ID;
         }
         try {
-            return jdbc.queryForObject("SELECT id FROM member_profile WHERE account_id = ?", Long.class, accountId);
+            return jdbc.queryForObject("""
+                    SELECT mp.id
+                    FROM member_profile mp
+                    JOIN user_account ua ON ua.id = mp.account_id
+                    WHERE mp.account_id = ? AND mp.deleted_at IS NULL
+                      AND ua.status = 'NORMAL' AND ua.deleted_at IS NULL
+                    """, Long.class, accountId);
         } catch (DataAccessException ignored) {
-            return DEFAULT_MEMBER_ID;
+            return null;
         }
+    }
+
+    private Long requireMemberId(Long accountId) {
+        if (accountId == null) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "请先登录后再操作");
+        }
+        Long memberId = memberId(accountId);
+        if (memberId == null) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "账号不存在、已禁用或不是会员账号");
+        }
+        return memberId;
     }
 
     private Long adminProfileId(Long accountId) {
         JdbcTemplate jdbc = jdbc();
-        if (jdbc == null || accountId == null) {
+        if (accountId == null) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "请先登录管理员账号");
+        }
+        if (jdbc == null) {
             return 1L;
         }
         try {
-            return jdbc.queryForObject("SELECT id FROM administrator_profile WHERE account_id = ?", Long.class, accountId);
+            return jdbc.queryForObject("""
+                    SELECT ap.id
+                    FROM administrator_profile ap
+                    JOIN user_account ua ON ua.id = ap.account_id
+                    WHERE ap.account_id = ? AND ap.deleted_at IS NULL
+                      AND ua.status = 'NORMAL' AND ua.deleted_at IS NULL
+                      AND ua.role IN ('ADMIN', 'SUPER_ADMIN', 'AUDITOR')
+                    """, Long.class, accountId);
         } catch (DataAccessException ignored) {
-            return 1L;
+            throw new BusinessException(ErrorCode.FORBIDDEN, "需要管理员权限");
         }
     }
 
