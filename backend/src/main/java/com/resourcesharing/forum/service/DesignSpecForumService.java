@@ -3,8 +3,11 @@ package com.resourcesharing.forum.service;
 import com.resourcesharing.forum.common.BusinessException;
 import com.resourcesharing.forum.common.ErrorCode;
 import com.resourcesharing.forum.common.PageResult;
+import com.resourcesharing.forum.domain.statemachine.RequestStateMachine;
+import com.resourcesharing.forum.domain.statemachine.ResourceStateMachine;
 import com.resourcesharing.forum.security.JwtProperties;
 import com.resourcesharing.forum.security.JwtService;
+import com.resourcesharing.forum.service.point.PointManager;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -45,6 +48,7 @@ public class DesignSpecForumService {
     private final JwtProperties jwtProperties;
     private final PasswordEncoder passwordEncoder;
     private final NotificationService notificationService;
+    private final PointManager pointManager;
 
     public DesignSpecForumService(
             ObjectProvider<JdbcTemplate> jdbcProvider,
@@ -52,7 +56,8 @@ public class DesignSpecForumService {
             JwtService jwtService,
             JwtProperties jwtProperties,
             PasswordEncoder passwordEncoder,
-            NotificationService notificationService
+            NotificationService notificationService,
+            PointManager pointManager
     ) {
         this.jdbcProvider = jdbcProvider;
         this.transactionManagerProvider = transactionManagerProvider;
@@ -60,6 +65,7 @@ public class DesignSpecForumService {
         this.jwtProperties = jwtProperties;
         this.passwordEncoder = passwordEncoder;
         this.notificationService = notificationService;
+        this.pointManager = pointManager;
     }
 
     public Map<String, Object> login(Map<String, Object> request) {
@@ -570,10 +576,10 @@ public class DesignSpecForumService {
                     "title", rs.getString("title")
             ), resourceId);
             String from = String.valueOf(before.get("status"));
-            String to = targetResourceStatus(normalized, from);
+            String to = ResourceStateMachine.targetStatusForAction(normalized);
             String auditResult = auditResultForAction(normalized, to);
             String reason = firstNonBlank(value(request, "reason", ""), defaultResourceReason(normalized));
-            validateResourceTransition(from, to);
+            ResourceStateMachine.assertCanTransit(from, to, normalized, "ADMIN", false, reason);
             jdbc.update("""
                     UPDATE resource_info
                     SET status = ?,
@@ -612,9 +618,7 @@ public class DesignSpecForumService {
                     FOR UPDATE
                     """, (rs, rowNum) -> map("status", rs.getString("status")), resourceId, memberId);
             String from = String.valueOf(before.get("status"));
-            if (!List.of("DRAFT", "REJECTED").contains(from)) {
-                throw new BusinessException(ErrorCode.BAD_REQUEST, "当前资源状态不能提交审核");
-            }
+            ResourceStateMachine.assertCanTransit(from, "PENDING_REVIEW", "SUBMIT", "MEMBER", true, "发布者提交审核");
             jdbc.update("UPDATE resource_info SET status = 'PENDING_REVIEW', submitted_time = NOW(3) WHERE id = ?", resourceId);
             jdbc.update("""
                     INSERT INTO resource_status_log(resource_id, from_status, to_status, operator_id, reason)
@@ -636,10 +640,8 @@ public class DesignSpecForumService {
                     WHERE id = ? AND publisher_id = ? AND deleted_at IS NULL
                     FOR UPDATE
                     """, (rs, rowNum) -> map("status", rs.getString("status")), resourceId, memberId);
-            if (!"PENDING_REVIEW".equals(before.get("status"))) {
-                throw new BusinessException(ErrorCode.BAD_REQUEST, "只有待审核资源可以撤回修改");
-            }
             String reason = firstNonBlank(value(request, "reason", ""), "发布者撤回修改");
+            ResourceStateMachine.assertCanTransit(String.valueOf(before.get("status")), "DRAFT", "WITHDRAW", "MEMBER", true, reason);
             jdbc.update("UPDATE resource_info SET status = 'DRAFT' WHERE id = ?", resourceId);
             jdbc.update("""
                     INSERT INTO resource_status_log(resource_id, from_status, to_status, operator_id, reason)
@@ -798,9 +800,6 @@ public class DesignSpecForumService {
         return inTransaction(() -> {
             Long memberId = requireMemberId(accountId);
             int reward = Math.max(0, (int) number(firstPresent(request, "rewardPoints", "points"), 0L).longValue());
-            if (reward > 0) {
-                freezePoints(jdbc, memberId, accountId, reward, null);
-            }
             KeyHolder keyHolder = new GeneratedKeyHolder();
             jdbc.update(connection -> {
                 PreparedStatement statement = connection.prepareStatement("""
@@ -823,7 +822,7 @@ public class DesignSpecForumService {
             }, keyHolder);
             Long requestId = key(keyHolder);
             if (reward > 0) {
-                jdbc.update("UPDATE point_flow SET related_id = ? WHERE member_id = ? AND related_type = 'REQUEST_POST' AND related_id IS NULL", requestId, memberId);
+                pointManager.freezeForRequest(memberId, reward, requestId);
             }
             insertRequestTags(jdbc, requestId, value(request, "tags", ""));
             jdbc.update("""
@@ -854,18 +853,17 @@ public class DesignSpecForumService {
             if (!Objects.equals(number(row.get("requesterId"), 0L), memberId)) {
                 throw new BusinessException(ErrorCode.FORBIDDEN, "只能取消自己发布的悬赏");
             }
-            if (!"ONGOING".equals(row.get("status"))) {
-                throw new BusinessException(ErrorCode.BAD_REQUEST, "悬赏不是进行中状态");
-            }
+            String reason = firstNonBlank(value(request, "reason", ""), "用户取消悬赏");
+            RequestStateMachine.assertCanTransit(String.valueOf(row.get("status")), "CANCELLED", "CANCEL", "MEMBER", true, reason);
             int reward = (int) number(row.get("reward"), 0L).longValue();
             if (reward > 0) {
-                unfreezePoints(jdbc, memberId, accountId, reward, requestId, "取消悬赏退回冻结积分");
+                pointManager.refundRequest(requestId);
             }
             jdbc.update("UPDATE request_post SET status = 'CANCELLED', closed_time = NOW(3) WHERE id = ?", requestId);
             jdbc.update("""
                     INSERT INTO request_status_log(request_id, from_status, to_status, operator_id, reason)
                     VALUES (?, 'ONGOING', 'CANCELLED', ?, ?)
-                    """, requestId, accountId, firstNonBlank(value(request, "reason", ""), "用户取消悬赏"));
+                    """, requestId, accountId, reason);
             return null;
         });
     }
@@ -945,14 +943,15 @@ public class DesignSpecForumService {
             if (!Objects.equals(number(post.get("requesterId"), 0L), memberId)) {
                 throw new BusinessException(ErrorCode.FORBIDDEN, "只有悬赏发布者可以采纳回答");
             }
-            if (!"ONGOING".equals(post.get("status")) || post.get("acceptedReplyId") != null) {
+            RequestStateMachine.assertCanTransit(String.valueOf(post.get("status")), "RESOLVED", "ACCEPT_REPLY", "MEMBER", true, "采纳回答并结算悬赏");
+            if (post.get("acceptedReplyId") != null) {
                 throw new BusinessException(ErrorCode.BAD_REQUEST, "悬赏不可结算");
             }
             Map<String, Object> reply = jdbc.queryForObject("SELECT replier_id FROM request_reply WHERE id = ? AND request_id = ? AND status = 'ACTIVE' FOR UPDATE",
                     (rs, rowNum) -> map("replierId", rs.getLong("replier_id")), replyId, requestId);
             int reward = (int) number(post.get("reward"), 0L).longValue();
             if (reward > 0) {
-                transferReward(jdbc, memberId, number(reply.get("replierId"), 0L), accountId, reward, requestId);
+                pointManager.transferReward(requestId, number(reply.get("replierId"), 0L));
             }
             jdbc.update("UPDATE request_reply SET is_accepted = 1, accepted_time = NOW(3) WHERE id = ?", replyId);
             jdbc.update("UPDATE request_post SET status = 'RESOLVED', accepted_reply_id = ?, resolved_time = NOW(3) WHERE id = ?", replyId, requestId);
@@ -1426,17 +1425,19 @@ public class DesignSpecForumService {
                 throw new BusinessException(ErrorCode.NOT_FOUND, "悬赏帖不存在");
             }
             String before = String.valueOf(post.get("status"));
+            String reason = firstNonBlank(value(request, "reason", ""), "管理员强制关闭悬赏");
+            RequestStateMachine.assertCanTransit(before, "CLOSED", "CLOSE", "ADMIN", false, reason);
             if ("ONGOING".equals(before)) {
                 int reward = (int) number(post.get("reward"), 0L).longValue();
                 if (reward > 0) {
-                    unfreezePoints(jdbc, number(post.get("requesterId"), 0L), adminAccountId, reward, requestId, "管理员关闭悬赏退回冻结积分");
+                    pointManager.refundRequest(requestId);
                 }
             }
             jdbc.update("UPDATE request_post SET status = 'CLOSED', closed_time = NOW(3) WHERE id = ?", requestId);
             jdbc.update("""
                     INSERT INTO request_status_log(request_id, from_status, to_status, operator_id, reason)
                     VALUES (?, ?, 'CLOSED', ?, ?)
-                    """, requestId, before, adminAccountId, firstNonBlank(value(request, "reason", ""), "管理员强制关闭悬赏"));
+                    """, requestId, before, adminAccountId, reason);
             adminLog(adminProfileId(adminAccountId), "REQUEST_CLOSE", "REQUEST_POST", requestId, before, "CLOSED");
             return requestPost(requestId);
         });
@@ -1901,71 +1902,6 @@ public class DesignSpecForumService {
                 fileExt(fileName), contentType, size, "./uploads/" + ownerType.toLowerCase() + "/" + ownerId + "/" + fileName);
     }
 
-    private void freezePoints(JdbcTemplate jdbc, Long memberId, Long accountId, int reward, Long requestId) {
-        Map<String, Object> before = pointAccountForUpdate(jdbc, memberId);
-        int current = (int) number(before.get("current"), 0L).longValue();
-        int frozen = (int) number(before.get("frozen"), 0L).longValue();
-        if (current - frozen < reward) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "积分不足");
-        }
-        jdbc.update("UPDATE member_point_account SET frozen_points = frozen_points + ? WHERE member_id = ?", reward, memberId);
-        jdbc.update("""
-                INSERT INTO point_flow(member_id, flow_type, scene, points_change, frozen_change, before_points, after_points,
-                                       before_frozen_points, after_frozen_points, related_type, related_id, operator_id, description)
-                VALUES (?, 'FREEZE', 'REQUEST_REWARD', 0, ?, ?, ?, ?, ?, 'REQUEST_POST', ?, ?, '发布悬赏冻结积分')
-                """, memberId, reward, current, current, frozen, frozen + reward, requestId, accountId);
-    }
-
-    private void unfreezePoints(JdbcTemplate jdbc, Long memberId, Long accountId, int reward, Long requestId, String description) {
-        Map<String, Object> before = pointAccountForUpdate(jdbc, memberId);
-        int current = (int) number(before.get("current"), 0L).longValue();
-        int frozen = (int) number(before.get("frozen"), 0L).longValue();
-        int afterFrozen = Math.max(0, frozen - reward);
-        jdbc.update("UPDATE member_point_account SET frozen_points = ? WHERE member_id = ?", afterFrozen, memberId);
-        jdbc.update("""
-                INSERT INTO point_flow(member_id, flow_type, scene, points_change, frozen_change, before_points, after_points,
-                                       before_frozen_points, after_frozen_points, related_type, related_id, operator_id, description)
-                VALUES (?, 'UNFREEZE', 'REQUEST_REWARD', 0, ?, ?, ?, ?, ?, 'REQUEST_POST', ?, ?, ?)
-                """, memberId, -reward, current, current, frozen, afterFrozen, requestId, accountId, description);
-    }
-
-    private void transferReward(JdbcTemplate jdbc, Long requesterId, Long replierId, Long accountId, int reward, Long requestId) {
-        Map<String, Object> from = pointAccountForUpdate(jdbc, requesterId);
-        Map<String, Object> to = pointAccountForUpdate(jdbc, replierId);
-        int fromCurrent = (int) number(from.get("current"), 0L).longValue();
-        int fromFrozen = (int) number(from.get("frozen"), 0L).longValue();
-        int toCurrent = (int) number(to.get("current"), 0L).longValue();
-        jdbc.update("""
-                UPDATE member_point_account
-                SET current_points = current_points - ?, frozen_points = GREATEST(frozen_points - ?, 0), total_spent_points = total_spent_points + ?
-                WHERE member_id = ?
-                """, reward, reward, reward, requesterId);
-        jdbc.update("""
-                UPDATE member_point_account
-                SET current_points = current_points + ?, total_earned_points = total_earned_points + ?
-                WHERE member_id = ?
-                """, reward, reward, replierId);
-        jdbc.update("""
-                INSERT INTO point_flow(member_id, flow_type, scene, points_change, frozen_change, before_points, after_points,
-                                       before_frozen_points, after_frozen_points, related_type, related_id, operator_id, description)
-                VALUES (?, 'TRANSFER_OUT', 'REQUEST_SETTLE', ?, ?, ?, ?, ?, ?, 'REQUEST_POST', ?, ?, '悬赏结算转出')
-                """, requesterId, -reward, -reward, fromCurrent, fromCurrent - reward, fromFrozen, Math.max(0, fromFrozen - reward), requestId, accountId);
-        jdbc.update("""
-                INSERT INTO point_flow(member_id, flow_type, scene, points_change, frozen_change, before_points, after_points,
-                                       before_frozen_points, after_frozen_points, related_type, related_id, operator_id, description)
-                VALUES (?, 'TRANSFER_IN', 'REQUEST_SETTLE', ?, 0, ?, ?, 0, 0, 'REQUEST_POST', ?, ?, '悬赏结算转入')
-                """, replierId, reward, toCurrent, toCurrent + reward, requestId, accountId);
-    }
-
-    private Map<String, Object> pointAccountForUpdate(JdbcTemplate jdbc, Long memberId) {
-        return jdbc.queryForObject("""
-                SELECT current_points, frozen_points
-                FROM member_point_account
-                WHERE member_id = ?
-                FOR UPDATE
-                """, (rs, rowNum) -> map("current", rs.getInt("current_points"), "frozen", rs.getInt("frozen_points")), memberId);
-    }
-
     private void recordLogin(JdbcTemplate jdbc, Long accountId, String loginAccount, String result, String failReason) {
         jdbc.update("""
                 INSERT INTO login_record(account_id, login_account, result, fail_reason)
@@ -2052,18 +1988,6 @@ public class DesignSpecForumService {
         }
     }
 
-    private static String targetResourceStatus(String action, String from) {
-        return switch (firstNonBlank(action)) {
-            case "APPROVE", "APPROVED", "RESTORE", "RESTORED", "RISK_CLEAR", "COPYRIGHT_CLEAR" -> "PUBLISHED";
-            case "REJECT", "REJECTED" -> "REJECTED";
-            case "RISK", "RISK_REVIEW", "REVIEWING_RISK" -> "REVIEWING_RISK";
-            case "OFFLINE" -> "OFFLINE";
-            case "COPYRIGHT", "COPYRIGHT_DOWN" -> "COPYRIGHT_DOWN";
-            case "DELETE", "DELETED" -> "DELETED";
-            default -> throw new BusinessException(ErrorCode.BAD_REQUEST, "不支持的资源状态操作: " + action + " from " + from);
-        };
-    }
-
     private static String auditResultForAction(String action, String targetStatus) {
         return switch (targetStatus) {
             case "PUBLISHED" -> "PUBLISHED".equals(action) || "APPROVE".equals(action) || "APPROVED".equals(action) ? "APPROVED" : "RESTORED";
@@ -2085,23 +2009,6 @@ public class DesignSpecForumService {
             case "DELETE", "DELETED" -> "管理员删除资源";
             default -> "管理员下架资源";
         };
-    }
-
-    private static void validateResourceTransition(String from, String to) {
-        if (Objects.equals(from, to)) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "资源已经处于目标状态");
-        }
-        boolean allowed = switch (to) {
-            case "PUBLISHED" -> List.of("PENDING_REVIEW", "REJECTED", "OFFLINE", "COPYRIGHT_DOWN", "REVIEWING_RISK").contains(from);
-            case "REJECTED" -> List.of("PENDING_REVIEW", "REVIEWING_RISK").contains(from);
-            case "REVIEWING_RISK" -> "PUBLISHED".equals(from);
-            case "OFFLINE", "COPYRIGHT_DOWN" -> List.of("PUBLISHED", "REVIEWING_RISK").contains(from);
-            case "DELETED" -> !"DELETED".equals(from);
-            default -> false;
-        };
-        if (!allowed) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "非法资源状态迁移: " + from + " -> " + to);
-        }
     }
 
     private boolean interactionActive(Long memberId, String targetType, Long targetId, String actionType) {
