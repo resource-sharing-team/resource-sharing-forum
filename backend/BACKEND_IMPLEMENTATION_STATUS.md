@@ -147,6 +147,8 @@
   - comment likes now require an active, non-deleted comment before writing `user_interaction`
   - comment creation, reply, and edit now validate content against enabled `sensitive_word` rules before writing comments
   - request replies that reference an internal resource now require that resource to be `PUBLISHED`
+  - request publishing now validates title and content length plus enabled `sensitive_word` rules before writing `request_post`
+  - request replies now require content, a published referenced resource, or an external URL before writing `request_reply`; provided reply content is length-checked and sensitive-word checked
 - Added handoff documents required by the spec:
   - `API_CONTRACT.md`
   - `FRONTEND_INTEGRATION_GUIDE.md`

@@ -3,6 +3,7 @@ package com.resourcesharing.forum;
 import com.resourcesharing.forum.common.BusinessException;
 import com.resourcesharing.forum.common.ErrorCode;
 import com.resourcesharing.forum.service.request.RequestRewardService;
+import com.resourcesharing.forum.service.support.ContentModerationService;
 import com.resourcesharing.forum.service.support.ForumLookupService;
 import com.resourcesharing.forum.service.support.MappingSupport;
 import com.resourcesharing.forum.service.support.TxSupport;
@@ -21,6 +22,38 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class RequestRewardServiceTest {
+    @Test
+    void createRequestValidatesTitleAndContentBeforeWriting() {
+        CapturingJdbcTemplate jdbc = new CapturingJdbcTemplate();
+        RequestRewardService service = service(jdbc);
+
+        assertThatThrownBy(() -> service.createRequest(7L, Map.of(
+                "title", "Need",
+                "content", "Need a complete backend project package"
+        )))
+                .isInstanceOf(BusinessException.class)
+                .extracting(exception -> ((BusinessException) exception).errorCode())
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+
+        assertThat(jdbc.updateSql()).isEmpty();
+    }
+
+    @Test
+    void createRequestRejectsSensitiveContentBeforeWriting() {
+        CapturingJdbcTemplate jdbc = new CapturingJdbcTemplate();
+        RequestRewardService service = service(jdbc, moderationRejecting("blocked"));
+
+        assertThatThrownBy(() -> service.createRequest(7L, Map.of(
+                "title", "Need course backend",
+                "content", "Need a blocked backend project package with docs"
+        )))
+                .isInstanceOf(BusinessException.class)
+                .extracting(exception -> ((BusinessException) exception).errorCode())
+                .isEqualTo(ErrorCode.SENSITIVE_CONTENT);
+
+        assertThat(jdbc.updateSql()).isEmpty();
+    }
+
     @Test
     void replyRequestRequiresReferencedResourceToBePublished() {
         CapturingJdbcTemplate jdbc = new CapturingJdbcTemplate();
@@ -44,13 +77,54 @@ class RequestRewardServiceTest {
         assertThat(jdbc.updateSql()).doesNotContain("INSERT INTO request_reply");
     }
 
+    @Test
+    void replyRequestRequiresContentResourceOrExternalUrlBeforeWriting() {
+        CapturingJdbcTemplate jdbc = new CapturingJdbcTemplate();
+        RequestRewardService service = service(jdbc);
+
+        assertThatThrownBy(() -> service.replyRequest(11L, 7L, Map.of("content", "  ")))
+                .isInstanceOf(BusinessException.class)
+                .extracting(exception -> ((BusinessException) exception).errorCode())
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+
+        assertThat(jdbc.updateSql()).isEmpty();
+    }
+
+    @Test
+    void replyRequestRejectsSensitiveContentBeforeWriting() {
+        CapturingJdbcTemplate jdbc = new CapturingJdbcTemplate();
+        RequestRewardService service = service(jdbc, moderationRejecting("blocked"));
+
+        assertThatThrownBy(() -> service.replyRequest(11L, 7L, Map.of("content", "blocked reply")))
+                .isInstanceOf(BusinessException.class)
+                .extracting(exception -> ((BusinessException) exception).errorCode())
+                .isEqualTo(ErrorCode.SENSITIVE_CONTENT);
+
+        assertThat(jdbc.updateSql()).isEmpty();
+    }
+
     private static RequestRewardService service(JdbcTemplate jdbc) {
+        return service(jdbc, new ContentModerationService(new TxSupport(provider(null), provider(null))));
+    }
+
+    private static RequestRewardService service(JdbcTemplate jdbc, ContentModerationService contentModerationService) {
         TxSupport txSupport = new TxSupport(provider(jdbc), provider(null));
         ValueSupport values = new ValueSupport();
         ForumLookupService lookup = new ForumLookupService(txSupport);
         MappingSupport mappings = new MappingSupport(values, lookup);
         AdminLogService adminLogService = new AdminLogService(txSupport, values);
-        return new RequestRewardService(txSupport, values, mappings, lookup, null, adminLogService, null);
+        return new RequestRewardService(txSupport, values, mappings, lookup, null, adminLogService, null, contentModerationService);
+    }
+
+    private static ContentModerationService moderationRejecting(String token) {
+        return new ContentModerationService(new TxSupport(provider(null), provider(null))) {
+            @Override
+            public void requireClean(String content) {
+                if (content != null && content.contains(token)) {
+                    throw new BusinessException(ErrorCode.SENSITIVE_CONTENT, ErrorCode.SENSITIVE_CONTENT.message());
+                }
+            }
+        };
     }
 
     private static final class CapturingJdbcTemplate extends JdbcTemplate {
