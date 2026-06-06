@@ -149,6 +149,7 @@
   - request replies that reference an internal resource now require that resource to be `PUBLISHED`
   - request publishing now validates title and content length plus enabled `sensitive_word` rules before writing `request_post`
   - request replies now require content, a published referenced resource, or an external URL before writing `request_reply`; provided reply content is length-checked and sensitive-word checked
+  - resource publishing now validates title, description, summary, tags, sensitive words, and enabled second-level category before writing `resource_info`
 - Added handoff documents required by the spec:
   - `API_CONTRACT.md`
   - `FRONTEND_INTEGRATION_GUIDE.md`
