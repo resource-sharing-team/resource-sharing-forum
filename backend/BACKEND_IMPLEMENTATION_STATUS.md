@@ -137,6 +137,15 @@
   - business and validation exceptions are logged at `WARN`
   - unexpected system exceptions are logged at `ERROR`
   - unified API error responses remain unchanged
+- Tightened authenticated account guards against the three Markdown design documents:
+  - JWT authentication now rejects accounts whose `locked_until` is still in the future
+  - shared member/admin lookup now requires `status=NORMAL`, no soft delete, and no active temporary lock
+  - protected member/admin workflows therefore reject disabled, deleted, and temporarily locked accounts before business execution
+  - resource details now expose non-`PUBLISHED` resources only to the publisher or a normal unlocked administrator
+  - comment creation now requires a commentable target: resources must be `PUBLISHED`, requests must be `ONGOING`, and replies must reference an active top-level parent on the same target
+  - comment deletion now soft-deletes only the owner's active comment and decrements the target comment count with a non-negative guard
+  - comment likes now require an active, non-deleted comment before writing `user_interaction`
+  - request replies that reference an internal resource now require that resource to be `PUBLISHED`
 - Added handoff documents required by the spec:
   - `API_CONTRACT.md`
   - `FRONTEND_INTEGRATION_GUIDE.md`

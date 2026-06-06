@@ -1,10 +1,13 @@
 package com.resourcesharing.forum.service.resource;
 
 import com.resourcesharing.forum.common.PageResult;
+import com.resourcesharing.forum.common.BusinessException;
+import com.resourcesharing.forum.common.ErrorCode;
 import com.resourcesharing.forum.service.support.MappingSupport;
 import com.resourcesharing.forum.service.support.TxSupport;
 import com.resourcesharing.forum.service.support.ValueSupport;
 import org.springframework.dao.DataAccessException;
+import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -136,7 +139,34 @@ public class ResourceQueryService {
                     LEFT JOIN resource_category c2 ON c2.id = r.category_id
                     LEFT JOIN resource_category c1 ON c1.id = c2.parent_id
                     WHERE r.id = ? AND r.deleted_at IS NULL
-                    """, mappings.resourceMapper(accountId), resourceId);
+                      AND (
+                          r.status = 'PUBLISHED'
+                          OR EXISTS (
+                              SELECT 1
+                              FROM member_profile current_mp
+                              JOIN user_account current_ua ON current_ua.id = current_mp.account_id
+                              WHERE current_mp.account_id = ?
+                                AND current_mp.id = r.publisher_id
+                                AND current_mp.deleted_at IS NULL
+                                AND current_ua.status = 'NORMAL'
+                                AND current_ua.deleted_at IS NULL
+                                AND (current_ua.locked_until IS NULL OR current_ua.locked_until <= NOW(3))
+                          )
+                          OR EXISTS (
+                              SELECT 1
+                              FROM administrator_profile ap
+                              JOIN user_account admin_ua ON admin_ua.id = ap.account_id
+                              WHERE ap.account_id = ?
+                                AND ap.deleted_at IS NULL
+                                AND admin_ua.status = 'NORMAL'
+                                AND admin_ua.deleted_at IS NULL
+                                AND (admin_ua.locked_until IS NULL OR admin_ua.locked_until <= NOW(3))
+                                AND admin_ua.role IN ('ADMIN', 'SUPER_ADMIN', 'AUDITOR')
+                          )
+                      )
+                    """, mappings.resourceMapper(accountId), resourceId, accountId, accountId);
+        } catch (EmptyResultDataAccessException ignored) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "resource does not exist or cannot be viewed");
         } catch (DataAccessException ignored) {
             return defaultResource();
         }

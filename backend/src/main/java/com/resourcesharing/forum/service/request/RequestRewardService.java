@@ -220,6 +220,8 @@ public class RequestRewardService {
             if (!"ONGOING".equals(post.get("status"))) {
                 throw new BusinessException(ErrorCode.BAD_REQUEST, "Request is not ongoing");
             }
+            Long resourceId = values.number(values.firstPresent(request, "resourceId", "referencedResourceId"), 0L);
+            ensureReferencedResourcePublished(jdbc, resourceId);
             KeyHolder keyHolder = new GeneratedKeyHolder();
             jdbc.update(connection -> {
                 PreparedStatement statement = connection.prepareStatement("""
@@ -229,7 +231,6 @@ public class RequestRewardService {
                 statement.setLong(1, requestId);
                 statement.setLong(2, memberId);
                 statement.setString(3, values.firstNonBlank(values.value(request, "content", ""), "I can provide relevant resources."));
-                Long resourceId = values.number(values.firstPresent(request, "resourceId", "referencedResourceId"), 0L);
                 if (resourceId == 0) {
                     statement.setObject(4, null);
                 } else {
@@ -243,6 +244,20 @@ public class RequestRewardService {
                     "Request received a new reply", "Your request received a new reply", "REQUEST_POST", requestId);
             return reply(values.key(keyHolder));
         });
+    }
+
+    private void ensureReferencedResourcePublished(JdbcTemplate jdbc, Long resourceId) {
+        if (resourceId == null || resourceId == 0) {
+            return;
+        }
+        Integer count = jdbc.queryForObject("""
+                SELECT COUNT(*)
+                FROM resource_info
+                WHERE id = ? AND status = 'PUBLISHED' AND deleted_at IS NULL
+                """, Integer.class, resourceId);
+        if (count == null || count == 0) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "referenced resource must be published");
+        }
     }
 
     public Map<String, Object> settleRequest(Long requestId, Long accountId, Map<String, Object> request) {
