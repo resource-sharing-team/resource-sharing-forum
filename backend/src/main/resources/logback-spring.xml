@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <springProperty scope="context" name="APP_LOG_LEVEL" source="APP_LOG_LEVEL" defaultValue="INFO"/>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>{"timestamp":"%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX}","level":"%level","traceId":"%X{traceId:-}","userId":"%X{userId:-}","class":"%logger{64}","message":"%replace(%replace(%replace(%msg){'\\','\\\\'}){'[\r\n]+',' '}){'\"','\\\"'}"}%n</pattern>
+        </encoder>
+    </appender>
+
+    <root level="${APP_LOG_LEVEL}">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+</configuration>

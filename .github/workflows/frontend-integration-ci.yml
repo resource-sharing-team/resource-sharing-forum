@@ -1,0 +1,88 @@
+name: Frontend Integration CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - refactor/**
+      - Web_User
+      - web_user
+  pull_request:
+    paths:
+      - "backend/**"
+      - ".github/workflows/frontend-integration-ci.yml"
+
+jobs:
+  frontend-backend-smoke:
+    name: Web_User to backend smoke
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out backend branch
+        uses: actions/checkout@v4
+        with:
+          path: backend-repo
+
+      - name: Check out web_user branch
+        uses: actions/checkout@v4
+        with:
+          ref: Web_User
+          path: web-user
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+          cache-dependency-path: backend-repo/backend/pom.xml
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web-user/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: web-user
+        run: npm ci
+
+      - name: Install Playwright browser
+        working-directory: web-user
+        run: npx playwright install --with-deps chromium
+
+      - name: Start backend without database for contract smoke
+        working-directory: backend-repo/backend
+        env:
+          SERVER_PORT: "18080"
+          SPRING_CONFIG_ADDITIONAL_LOCATION: "file:${{ github.workspace }}/backend-repo/backend/src/test/resources/application.yml"
+        run: |
+          chmod +x ./mvnw
+          nohup ./mvnw -B spring-boot:run > backend-smoke.log 2>&1 &
+          echo $! > backend-smoke.pid
+          for i in {1..45}; do
+            if curl -fsS http://127.0.0.1:18080/api/health; then
+              exit 0
+            fi
+            sleep 2
+          done
+          cat backend-smoke.log
+          exit 1
+
+      - name: Run frontend real-backend smoke
+        working-directory: web-user
+        env:
+          VITE_API_BASE_URL: http://127.0.0.1:18080
+          VITE_API_PREFIX: /api
+          VITE_ENABLE_MOCKS: "false"
+        run: npm run test:e2e:backend
+
+      - name: Stop backend smoke server
+        if: always()
+        working-directory: backend-repo/backend
+        run: |
+          if [ -f backend-smoke.pid ]; then
+            kill "$(cat backend-smoke.pid)" || true
+          fi

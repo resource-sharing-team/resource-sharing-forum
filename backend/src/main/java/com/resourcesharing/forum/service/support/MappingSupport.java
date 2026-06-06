@@ -24,7 +24,7 @@ public class MappingSupport {
                 "username", rs.getString("username"),
                 "nickname", firstNonBlank(rs.getString("nickname"), rs.getString("username")),
                 "email", rs.getString("email"),
-                "role", rs.getString("role"),
+                "role", roleForToken(rs.getString("role")),
                 "status", "NORMAL",
                 "emailVerified", true,
                 "bio", firstNonBlank(rs.getString("bio"), ""),
@@ -147,5 +147,9 @@ public class MappingSupport {
             }
         }
         return "";
+    }
+
+    private static String roleForToken(String role) {
+        return "ADMIN".equals(role) || "SUPER_ADMIN".equals(role) || "AUDITOR".equals(role) ? "ADMIN" : "MEMBER";
     }
 }

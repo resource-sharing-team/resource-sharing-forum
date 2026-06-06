@@ -1,0 +1,85 @@
+name: Backend CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - refactor/**
+      - Web_User
+      - web_user
+  pull_request:
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-ci.yml"
+
+jobs:
+  backend:
+    name: Test and deployment checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Make Maven wrapper executable
+        run: chmod +x ./mvnw
+
+      - name: Run backend tests
+        run: ./mvnw -B test
+
+      - name: Package backend jar
+        run: ./mvnw -B -DskipTests package
+
+      - name: Check whitespace
+        working-directory: .
+        run: git diff --check
+
+      - name: Prepare CI compose environment
+        run: |
+          cat > .env <<'EOF'
+          MYSQL_ROOT_PASSWORD=ci-root-password-32-characters
+          MYSQL_APP_USER=forum_app
+          MYSQL_APP_PASSWORD=ci-app-password-32-characters
+          MYSQL_DATABASE=resource_sharing_forum
+          CORS_ALLOWED_ORIGINS=http://localhost:5173
+          JWT_SECRET=ci-jwt-secret-32-characters-minimum
+          EOF
+
+      - name: Validate Docker Compose
+        run: docker compose config
+
+      - name: Build backend image
+        run: docker build -t resource-sharing-forum-backend:ci .
+
+      - name: Upload deployment handoff package
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-deployment-handoff
+          path: |
+            backend/Dockerfile
+            backend/docker-compose.yml
+            backend/pom.xml
+            backend/.env.example
+            backend/src/main/resources/application-prod.yml
+            backend/src/main/resources/db/migration/
+            backend/scripts/
+            backend/target/*.jar
+            backend/BACKEND_DEPLOYMENT.md
+            backend/BACKEND_DEPLOYMENT_TRACEABILITY.md
+            backend/SPEC_DEPLOYMENT_ACCEPTANCE.md
+            backend/API_CONTRACT.md
+            backend/FRONTEND_INTEGRATION_GUIDE.md
+            backend/SCHEMA.md
+          if-no-files-found: error
+          include-hidden-files: true
