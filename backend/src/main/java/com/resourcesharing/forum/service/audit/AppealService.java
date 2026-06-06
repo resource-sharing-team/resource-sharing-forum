@@ -2,6 +2,7 @@ package com.resourcesharing.forum.service.audit;
 
 import com.resourcesharing.forum.common.BusinessException;
 import com.resourcesharing.forum.common.ErrorCode;
+import com.resourcesharing.forum.service.notification.NotificationDispatcher;
 import com.resourcesharing.forum.service.support.ForumLookupService;
 import com.resourcesharing.forum.service.support.TxSupport;
 import com.resourcesharing.forum.service.support.ValueSupport;
@@ -23,17 +24,20 @@ public class AppealService {
     private final ValueSupport values;
     private final ForumLookupService lookup;
     private final AdminLogService adminLogService;
+    private final NotificationDispatcher notificationDispatcher;
 
     public AppealService(
             TxSupport txSupport,
             ValueSupport values,
             ForumLookupService lookup,
-            AdminLogService adminLogService
+            AdminLogService adminLogService,
+            NotificationDispatcher notificationDispatcher
     ) {
         this.txSupport = txSupport;
         this.values = values;
         this.lookup = lookup;
         this.adminLogService = adminLogService;
+        this.notificationDispatcher = notificationDispatcher;
     }
 
     public Map<String, Object> appeal(Long accountId, Map<String, Object> request) {
@@ -69,29 +73,44 @@ public class AppealService {
         }
         return txSupport.required(() -> {
             Long adminId = lookup.adminProfileId(adminAccountId);
-            String before = appealStatusForUpdate(jdbc, appealId);
+            Map<String, Object> appeal = appealForUpdate(jdbc, appealId);
+            String before = String.valueOf(appeal.get("status"));
             String status = values.firstNonBlank(values.value(request, "status", ""), values.value(request, "result", ""), "APPROVED").toUpperCase();
             if (!List.of("APPROVED", "REJECTED", "PROCESSING").contains(status)) {
                 status = "APPROVED";
             }
+            String handleResult = values.firstNonBlank(values.value(request, "handleResult", ""), values.value(request, "reason", ""), "Admin handled appeal");
             jdbc.update("""
                     UPDATE appeal_record
                     SET status = ?, handler_id = ?, handle_result = ?, handle_time = NOW(3)
                     WHERE id = ? AND deleted_at IS NULL
-                    """, status, adminId, values.firstNonBlank(values.value(request, "handleResult", ""), values.value(request, "reason", ""), "Admin handled appeal"), appealId);
+                    """, status, adminId, handleResult, appealId);
             adminLogService.record(adminId, "APPEAL_HANDLE", "APPEAL", appealId, before, status);
+            notificationDispatcher.dispatchToMember(
+                    values.number(appeal.get("appellantId"), 0L),
+                    "APPEAL_RESULT",
+                    "Appeal handled",
+                    "Your appeal has been handled. Result: " + status + ". " + handleResult,
+                    String.valueOf(appeal.get("targetType")),
+                    values.number(appeal.get("targetId"), appealId)
+            );
             return values.map("id", appealId, "status", status);
         });
     }
 
-    private String appealStatusForUpdate(JdbcTemplate jdbc, Long appealId) {
+    private Map<String, Object> appealForUpdate(JdbcTemplate jdbc, Long appealId) {
         try {
             return jdbc.queryForObject("""
-                    SELECT status
+                    SELECT appellant_id, target_type, target_id, status
                     FROM appeal_record
                     WHERE id = ? AND deleted_at IS NULL
                     FOR UPDATE
-                    """, String.class, appealId);
+                    """, (rs, rowNum) -> values.map(
+                    "appellantId", rs.getLong("appellant_id"),
+                    "targetType", rs.getString("target_type"),
+                    "targetId", rs.getLong("target_id"),
+                    "status", rs.getString("status")
+            ), appealId);
         } catch (DataAccessException exception) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "Appeal does not exist");
         }

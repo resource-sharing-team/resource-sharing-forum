@@ -19,4 +19,5 @@
 /backend/logs/
 /backend/.env
 /backend/*.log
+/backend/deployment-evidence/
 

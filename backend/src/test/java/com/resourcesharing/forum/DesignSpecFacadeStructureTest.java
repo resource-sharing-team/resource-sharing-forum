@@ -2,11 +2,14 @@ package com.resourcesharing.forum;
 
 import com.resourcesharing.forum.service.DesignSpecForumService;
 import com.resourcesharing.forum.service.LegacyDesignSpecForumService;
+import com.resourcesharing.forum.service.NotificationService;
 import com.resourcesharing.forum.service.audit.AppealService;
 import com.resourcesharing.forum.service.audit.ReportComplaintService;
 import com.resourcesharing.forum.service.identity.AuthService;
 import com.resourcesharing.forum.service.identity.MemberService;
 import com.resourcesharing.forum.service.interaction.InteractionService;
+import com.resourcesharing.forum.service.notification.NotificationDispatcher;
+import com.resourcesharing.forum.service.notification.NotificationEventService;
 import com.resourcesharing.forum.service.request.RequestRewardService;
 import com.resourcesharing.forum.service.resource.ResourceQueryService;
 import com.resourcesharing.forum.service.system.AdminCatalogService;
@@ -69,15 +72,27 @@ class DesignSpecFacadeStructureTest {
 
     @Test
     void migratedDomainServicesDoNotDependOnLegacyImplementation() {
+        assertNoLegacyDependency(AuthService.class);
+        assertNoLegacyDependency(MemberService.class);
         assertNoLegacyDependency(ResourceQueryService.class);
         assertNoLegacyDependency(com.resourcesharing.forum.service.resource.ResourceService.class);
         assertNoLegacyDependency(com.resourcesharing.forum.service.resource.FileService.class);
+        assertNoLegacyDependency(InteractionService.class);
         assertNoLegacyDependency(RequestRewardService.class);
         assertNoLegacyDependency(AdminCatalogService.class);
         assertNoLegacyDependency(AdminSystemService.class);
         assertNoLegacyDependency(AdminMemberService.class);
         assertNoLegacyDependency(ReportComplaintService.class);
         assertNoLegacyDependency(AppealService.class);
+        assertNoLegacyDependency(NotificationEventService.class);
+        assertNoLegacyDependency(NotificationDispatcher.class);
+        assertNoLegacyDependency(com.resourcesharing.forum.service.notification.NotificationService.class);
+    }
+
+    @Test
+    void notificationFacadeAndDispatcherKeepInfrastructureBehindModuleBoundary() {
+        assertNoFieldType(NotificationService.class, org.springframework.jdbc.core.JdbcTemplate.class);
+        assertNoFieldType(NotificationDispatcher.class, org.springframework.jdbc.core.JdbcTemplate.class);
     }
 
     private static void assertNoLegacyDependency(Class<?> serviceType) {
@@ -91,5 +106,13 @@ class DesignSpecFacadeStructureTest {
 
         assertThat(fieldTypes).doesNotContain(LegacyDesignSpecForumService.class);
         assertThat(constructorTypes).doesNotContain(LegacyDesignSpecForumService.class);
+    }
+
+    private static void assertNoFieldType(Class<?> serviceType, Class<?> forbiddenType) {
+        Set<Class<?>> fieldTypes = Arrays.stream(serviceType.getDeclaredFields())
+                .map(Field::getType)
+                .collect(Collectors.toSet());
+
+        assertThat(fieldTypes).doesNotContain(forbiddenType);
     }
 }

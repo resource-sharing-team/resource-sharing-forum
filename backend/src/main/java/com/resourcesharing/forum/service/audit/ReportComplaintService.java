@@ -2,6 +2,7 @@ package com.resourcesharing.forum.service.audit;
 
 import com.resourcesharing.forum.common.BusinessException;
 import com.resourcesharing.forum.common.ErrorCode;
+import com.resourcesharing.forum.service.notification.NotificationDispatcher;
 import com.resourcesharing.forum.service.support.ForumLookupService;
 import com.resourcesharing.forum.service.support.TxSupport;
 import com.resourcesharing.forum.service.support.ValueSupport;
@@ -23,17 +24,20 @@ public class ReportComplaintService {
     private final ValueSupport values;
     private final ForumLookupService lookup;
     private final AdminLogService adminLogService;
+    private final NotificationDispatcher notificationDispatcher;
 
     public ReportComplaintService(
             TxSupport txSupport,
             ValueSupport values,
             ForumLookupService lookup,
-            AdminLogService adminLogService
+            AdminLogService adminLogService,
+            NotificationDispatcher notificationDispatcher
     ) {
         this.txSupport = txSupport;
         this.values = values;
         this.lookup = lookup;
         this.adminLogService = adminLogService;
+        this.notificationDispatcher = notificationDispatcher;
     }
 
     public Map<String, Object> report(Long accountId, Map<String, Object> request) {
@@ -68,29 +72,44 @@ public class ReportComplaintService {
         }
         return txSupport.required(() -> {
             Long adminId = lookup.adminProfileId(adminAccountId);
-            String before = reportStatusForUpdate(jdbc, reportId);
+            Map<String, Object> report = reportForUpdate(jdbc, reportId);
+            String before = String.valueOf(report.get("status"));
             String status = values.firstNonBlank(values.value(request, "status", ""), values.value(request, "result", ""), "RESOLVED").toUpperCase();
             if (!List.of("RESOLVED", "REJECTED", "PROCESSING").contains(status)) {
                 status = "RESOLVED";
             }
+            String handleResult = values.firstNonBlank(values.value(request, "handleResult", ""), values.value(request, "reason", ""), "Admin handled report");
             jdbc.update("""
                     UPDATE report_complaint
                     SET status = ?, handler_id = ?, handle_result = ?, handle_time = NOW(3)
                     WHERE id = ? AND deleted_at IS NULL
-                    """, status, adminId, values.firstNonBlank(values.value(request, "handleResult", ""), values.value(request, "reason", ""), "Admin handled report"), reportId);
+                    """, status, adminId, handleResult, reportId);
             adminLogService.record(adminId, "REPORT_HANDLE", "REPORT_COMPLAINT", reportId, before, status);
+            notificationDispatcher.dispatchToMember(
+                    values.number(report.get("reporterId"), 0L),
+                    "REPORT_RESULT",
+                    "Report handled",
+                    "Your report has been handled. Result: " + status + ". " + handleResult,
+                    String.valueOf(report.get("targetType")),
+                    values.number(report.get("targetId"), reportId)
+            );
             return values.map("id", reportId, "status", status);
         });
     }
 
-    private String reportStatusForUpdate(JdbcTemplate jdbc, Long reportId) {
+    private Map<String, Object> reportForUpdate(JdbcTemplate jdbc, Long reportId) {
         try {
             return jdbc.queryForObject("""
-                    SELECT status
+                    SELECT reporter_id, target_type, target_id, status
                     FROM report_complaint
                     WHERE id = ? AND deleted_at IS NULL
                     FOR UPDATE
-                    """, String.class, reportId);
+                    """, (rs, rowNum) -> values.map(
+                    "reporterId", rs.getLong("reporter_id"),
+                    "targetType", rs.getString("target_type"),
+                    "targetId", rs.getLong("target_id"),
+                    "status", rs.getString("status")
+            ), reportId);
         } catch (DataAccessException exception) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "Report does not exist");
         }

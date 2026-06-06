@@ -14,6 +14,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest
@@ -29,9 +30,14 @@ class ApiSmokeTests {
     void healthEndpointReturnsUnifiedResponse() throws Exception {
         mockMvc.perform(get("/api/health"))
                 .andExpect(status().isOk())
+                .andExpect(header().exists("X-Trace-Id"))
+                .andExpect(header().string("X-Content-Type-Options", "nosniff"))
+                .andExpect(header().string("X-Frame-Options", "DENY"))
+                .andExpect(header().exists("Content-Security-Policy"))
                 .andExpect(jsonPath("$.code").value(200))
                 .andExpect(jsonPath("$.timestamp").exists())
-                .andExpect(jsonPath("$.data.status").value("UP"));
+                .andExpect(jsonPath("$.data.status").value("UP"))
+                .andExpect(jsonPath("$.data.database").value("UNCONFIGURED"));
     }
 
     @Test
@@ -48,7 +54,11 @@ class ApiSmokeTests {
     @Test
     void protectedEndpointRequiresToken() throws Exception {
         mockMvc.perform(get("/api/v1/user/profile"))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().exists("X-Trace-Id"))
+                .andExpect(header().string("X-Content-Type-Options", "nosniff"))
+                .andExpect(header().string("X-Frame-Options", "DENY"))
+                .andExpect(header().exists("Content-Security-Policy"));
     }
 
     @Test

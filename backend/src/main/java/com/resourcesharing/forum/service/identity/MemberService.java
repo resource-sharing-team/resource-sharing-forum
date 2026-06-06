@@ -1,31 +1,163 @@
 package com.resourcesharing.forum.service.identity;
 
-import com.resourcesharing.forum.service.LegacyDesignSpecForumService;
+import com.resourcesharing.forum.common.BusinessException;
+import com.resourcesharing.forum.common.ErrorCode;
+import com.resourcesharing.forum.service.support.MappingSupport;
+import com.resourcesharing.forum.service.support.TxSupport;
+import com.resourcesharing.forum.service.support.ValueSupport;
+import org.springframework.dao.DataAccessException;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import java.util.Map;
+import java.util.Objects;
 
 @Service("designSpecMemberService")
 public class MemberService {
-    private final LegacyDesignSpecForumService legacy;
+    private static final long DEFAULT_ACCOUNT_ID = 1L;
+    private static final long DEFAULT_MEMBER_ID = 1L;
 
-    public MemberService(LegacyDesignSpecForumService legacy) {
-        this.legacy = legacy;
+    private final TxSupport txSupport;
+    private final ValueSupport values;
+    private final MappingSupport mappings;
+    private final PasswordEncoder passwordEncoder;
+
+    public MemberService(
+            TxSupport txSupport,
+            ValueSupport values,
+            MappingSupport mappings,
+            PasswordEncoder passwordEncoder
+    ) {
+        this.txSupport = txSupport;
+        this.values = values;
+        this.mappings = mappings;
+        this.passwordEncoder = passwordEncoder;
     }
 
     public Map<String, Object> userProfile(Long accountId) {
-        return legacy.userProfile(accountId);
+        JdbcTemplate jdbc = txSupport.jdbc();
+        if (jdbc == null || accountId == null) {
+            return defaultUser(accountId);
+        }
+        try {
+            return jdbc.queryForObject("""
+                    SELECT ua.id, ua.username, ua.email, ua.role, ua.password_changed_time,
+                           mp.id AS member_id, mp.nickname, mp.avatar_url, mp.bio,
+                           ml.level_name, mpa.current_points, mpa.frozen_points
+                    FROM user_account ua
+                    LEFT JOIN member_profile mp ON mp.account_id = ua.id AND mp.deleted_at IS NULL
+                    LEFT JOIN member_point_account mpa ON mpa.member_id = mp.id AND mpa.deleted_at IS NULL
+                    LEFT JOIN membership_level ml ON ml.id = mpa.level_id
+                    WHERE ua.id = ? AND ua.deleted_at IS NULL
+                    """, mappings.userMapper(), accountId);
+        } catch (DataAccessException ignored) {
+            return defaultUser(accountId);
+        }
     }
 
     public Map<String, Object> updateUserProfile(Long accountId, Map<String, Object> request) {
-        return legacy.updateUserProfile(accountId, request);
+        JdbcTemplate jdbc = txSupport.jdbc();
+        if (jdbc == null) {
+            return defaultUser(accountId);
+        }
+        jdbc.update("""
+                UPDATE member_profile
+                SET nickname = COALESCE(?, nickname),
+                    bio = COALESCE(?, bio),
+                    avatar_url = COALESCE(?, avatar_url)
+                WHERE account_id = ? AND deleted_at IS NULL
+                """, values.nullable(request, "nickname"), values.nullable(request, "bio"), values.nullable(request, "avatar"), accountId);
+        return userProfile(accountId);
     }
 
     public Map<String, Object> changePassword(Long accountId, Map<String, Object> request) {
-        return legacy.changePassword(accountId, request);
+        JdbcTemplate jdbc = txSupport.jdbc();
+        if (jdbc == null) {
+            return values.map("ok", true);
+        }
+        String oldPassword = values.firstNonBlank(values.value(request, "oldPassword", ""), values.value(request, "currentPassword", ""));
+        String newPassword = values.firstNonBlank(values.value(request, "newPassword", ""), values.value(request, "password", ""));
+        if (oldPassword.isBlank() || newPassword.length() < 6) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "old password is required and new password length must be at least 6");
+        }
+        Map<String, Object> account = jdbc.queryForObject("""
+                SELECT password_hash
+                FROM user_account
+                WHERE id = ? AND deleted_at IS NULL
+                """, (rs, rowNum) -> values.map("passwordHash", rs.getString("password_hash")), accountId);
+        if (account == null || !passwordEncoder.matches(oldPassword, String.valueOf(account.get("passwordHash")))) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "old password is incorrect");
+        }
+        if (passwordEncoder.matches(newPassword, String.valueOf(account.get("passwordHash")))) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "new password cannot be the same as old password");
+        }
+        jdbc.update("""
+                UPDATE user_account
+                SET password_hash = ?, password_changed_time = NOW(3)
+                WHERE id = ?
+                """, passwordEncoder.encode(newPassword), accountId);
+        return values.map("ok", true, "passwordUpdatedAt", values.today());
     }
 
     public Map<String, Object> changeEmail(Long accountId, Map<String, Object> request) {
-        return legacy.changeEmail(accountId, request);
+        JdbcTemplate jdbc = txSupport.jdbc();
+        if (jdbc == null) {
+            Map<String, Object> user = defaultUser(accountId);
+            user.put("email", values.firstNonBlank(values.value(request, "newEmail", ""), values.value(request, "email", ""), String.valueOf(user.get("email"))));
+            return user;
+        }
+        String oldEmail = values.value(request, "oldEmail", "");
+        String newEmail = values.firstNonBlank(values.value(request, "newEmail", ""), values.value(request, "email", ""));
+        if (newEmail.isBlank() || !newEmail.contains("@")) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "email format is invalid");
+        }
+        Map<String, Object> account = jdbc.queryForObject("""
+                SELECT email
+                FROM user_account
+                WHERE id = ? AND deleted_at IS NULL
+                """, (rs, rowNum) -> values.map("email", rs.getString("email")), accountId);
+        if (account == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "account does not exist");
+        }
+        String currentEmail = String.valueOf(account.get("email"));
+        if (!oldEmail.isBlank() && !Objects.equals(oldEmail, currentEmail)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "old email does not match");
+        }
+        Integer exists = jdbc.queryForObject("""
+                SELECT COUNT(*)
+                FROM user_account
+                WHERE email = ? AND id <> ? AND deleted_at IS NULL
+                """, Integer.class, newEmail, accountId);
+        if (exists != null && exists > 0) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "email is already used");
+        }
+        jdbc.update("""
+                UPDATE user_account
+                SET email = ?
+                WHERE id = ?
+                """, newEmail, accountId);
+        return userProfile(accountId);
+    }
+
+    private Map<String, Object> defaultUser(Long accountId) {
+        return values.map(
+                "id", accountId == null ? DEFAULT_ACCOUNT_ID : accountId,
+                "memberId", DEFAULT_MEMBER_ID,
+                "username", "demo_user",
+                "nickname", "demo_user",
+                "email", "demo@example.com",
+                "role", "MEMBER",
+                "status", "NORMAL",
+                "emailVerified", true,
+                "bio", "demo user profile",
+                "contact", "demo@example.com",
+                "avatar", "",
+                "level", "Member",
+                "points", 650,
+                "frozenPoints", 0,
+                "expNeeded", 350,
+                "passwordUpdatedAt", values.today()
+        );
     }
 }
