@@ -4,6 +4,7 @@ import com.resourcesharing.forum.common.BusinessException;
 import com.resourcesharing.forum.common.ErrorCode;
 import com.resourcesharing.forum.domain.statemachine.ResourceStateMachine;
 import com.resourcesharing.forum.service.notification.NotificationDispatcher;
+import com.resourcesharing.forum.service.support.ContentModerationService;
 import com.resourcesharing.forum.service.support.ForumLookupService;
 import com.resourcesharing.forum.service.support.TxSupport;
 import com.resourcesharing.forum.service.support.ValueSupport;
@@ -17,9 +18,12 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.sql.PreparedStatement;
 import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 @Service("designSpecResourceLifecycleService")
 public class ResourceService {
@@ -29,6 +33,7 @@ public class ResourceService {
     private final ResourceQueryService resourceQueryService;
     private final AdminLogService adminLogService;
     private final NotificationDispatcher notificationDispatcher;
+    private final ContentModerationService contentModerationService;
 
     public ResourceService(
             TxSupport txSupport,
@@ -36,7 +41,8 @@ public class ResourceService {
             ForumLookupService lookup,
             ResourceQueryService resourceQueryService,
             AdminLogService adminLogService,
-            NotificationDispatcher notificationDispatcher
+            NotificationDispatcher notificationDispatcher,
+            ContentModerationService contentModerationService
     ) {
         this.txSupport = txSupport;
         this.values = values;
@@ -44,9 +50,15 @@ public class ResourceService {
         this.resourceQueryService = resourceQueryService;
         this.adminLogService = adminLogService;
         this.notificationDispatcher = notificationDispatcher;
+        this.contentModerationService = contentModerationService;
     }
 
     public Map<String, Object> publishResource(Long accountId, Map<String, Object> request, List<MultipartFile> files) {
+        Long categoryId = values.number(values.firstPresent(request, "categoryId", "category2"), 0L);
+        String title = normalizeResourceTitle(values.value(request, "title", ""));
+        String detail = normalizeResourceDescription(values.firstNonBlank(values.value(request, "detail", ""), values.value(request, "description", "")));
+        String summary = normalizeResourceSummary(values.value(request, "summary", ""), detail);
+        List<String> tags = normalizeTags(values.firstPresent(request, "tags"));
         JdbcTemplate jdbc = txSupport.jdbc();
         if (jdbc == null) {
             Map<String, Object> resource = resourceQueryService.resource(1L, accountId);
@@ -55,10 +67,8 @@ public class ResourceService {
         }
         return txSupport.required(() -> {
             Long memberId = lookup.requireMemberId(accountId);
-            Long categoryId = values.number(values.firstPresent(request, "categoryId", "category2"), 11L);
-            String title = values.firstNonBlank(values.value(request, "title", ""), "New Resource");
-            String summary = values.firstNonBlank(values.value(request, "summary", ""), values.value(request, "description", ""), "Resource summary");
-            String detail = values.firstNonBlank(values.value(request, "detail", ""), values.value(request, "description", ""), "Resource detail");
+            ensurePublishableCategory(jdbc, categoryId);
+            ensureTagsUsable(jdbc, tags);
             String type = resourceType(values.firstNonBlank(values.value(request, "resourceType", ""), values.value(request, "type", "DOCUMENT")));
             boolean draft = Boolean.parseBoolean(values.value(request, "draft", "false")) || "DRAFT".equalsIgnoreCase(values.value(request, "status", ""));
             String initialStatus = draft ? "DRAFT" : "PENDING_REVIEW";
@@ -82,7 +92,7 @@ public class ResourceService {
                 return statement;
             }, resourceKey);
             Long resourceId = values.key(resourceKey);
-            insertResourceTags(jdbc, resourceId, values.value(request, "tags", ""));
+            insertResourceTags(jdbc, resourceId, tags);
             insertAttachments(jdbc, "RESOURCE", resourceId, accountId, files, values.firstNonBlank(values.value(request, "fileName", ""), "uploaded-file.zip"));
             jdbc.update("""
                     INSERT INTO resource_version(resource_id, version_no, title, summary, description, category_id, resource_type, submitter_id)
@@ -252,8 +262,8 @@ public class ResourceService {
         });
     }
 
-    private void insertResourceTags(JdbcTemplate jdbc, Long resourceId, String tagsText) {
-        for (String tag : values.splitTags(tagsText)) {
+    private void insertResourceTags(JdbcTemplate jdbc, Long resourceId, List<String> tags) {
+        for (String tag : tags) {
             Long tagId = ensureTag(jdbc, tag);
             jdbc.update("INSERT IGNORE INTO resource_tag_rel(resource_id, tag_id) VALUES (?, ?)", resourceId, tagId);
         }
@@ -261,7 +271,15 @@ public class ResourceService {
 
     private Long ensureTag(JdbcTemplate jdbc, String tagName) {
         try {
-            return jdbc.queryForObject("SELECT id FROM tag_info WHERE tag_name = ?", Long.class, tagName);
+            Map<String, Object> tag = jdbc.queryForObject("""
+                    SELECT id, status
+                    FROM tag_info
+                    WHERE tag_name = ? AND deleted_at IS NULL
+                    """, (rs, rowNum) -> values.map("id", rs.getLong("id"), "status", rs.getString("status")), tagName);
+            if (!"ENABLED".equals(tag.get("status"))) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "disabled tag cannot be used");
+            }
+            return values.number(tag.get("id"), 0L);
         } catch (DataAccessException ignored) {
             KeyHolder keyHolder = new GeneratedKeyHolder();
             jdbc.update(connection -> {
@@ -270,6 +288,95 @@ public class ResourceService {
                 return statement;
             }, keyHolder);
             return values.key(keyHolder);
+        }
+    }
+
+    private String normalizeResourceTitle(String title) {
+        String normalized = values.firstNonBlank(title);
+        if (normalized.length() < 5 || normalized.length() > 100) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "resource title length must be between 5 and 100");
+        }
+        contentModerationService.requireClean(normalized);
+        return normalized;
+    }
+
+    private String normalizeResourceDescription(String description) {
+        String normalized = values.firstNonBlank(description);
+        if (normalized.length() < 20 || normalized.length() > 5000) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "resource description length must be between 20 and 5000");
+        }
+        contentModerationService.requireClean(normalized);
+        return normalized;
+    }
+
+    private String normalizeResourceSummary(String summary, String detail) {
+        String normalized = values.firstNonBlank(summary);
+        if (normalized.isBlank()) {
+            return detail.length() <= 300 ? detail : detail.substring(0, 300);
+        }
+        if (normalized.length() > 300) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "resource summary length must be at most 300");
+        }
+        contentModerationService.requireClean(normalized);
+        return normalized;
+    }
+
+    private List<String> normalizeTags(Object rawTags) {
+        Set<String> normalized = new LinkedHashSet<>();
+        if (rawTags instanceof Iterable<?> items) {
+            for (Object item : items) {
+                addTag(normalized, item == null ? "" : String.valueOf(item));
+            }
+        } else if (rawTags != null && !String.valueOf(rawTags).isBlank()) {
+            for (String tag : String.valueOf(rawTags).split("[,\\uFF0C]")) {
+                addTag(normalized, tag);
+            }
+        }
+        if (normalized.isEmpty() || normalized.size() > 5) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "resource tags count must be between 1 and 5");
+        }
+        return new ArrayList<>(normalized);
+    }
+
+    private void addTag(Set<String> tags, String tag) {
+        String normalized = values.firstNonBlank(tag);
+        if (normalized.isBlank()) {
+            return;
+        }
+        if (normalized.length() > 12) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "resource tag length must be at most 12");
+        }
+        tags.add(normalized);
+    }
+
+    private void ensurePublishableCategory(JdbcTemplate jdbc, Long categoryId) {
+        if (categoryId == null || categoryId == 0) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "resource category is required");
+        }
+        Integer count = jdbc.queryForObject("""
+                SELECT COUNT(*)
+                FROM resource_category
+                WHERE id = ? AND level_no = 2 AND status = 'ENABLED' AND deleted_at IS NULL
+                """, Integer.class, categoryId);
+        if (count == null || count == 0) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "resource category must be an enabled second-level category");
+        }
+    }
+
+    private void ensureTagsUsable(JdbcTemplate jdbc, List<String> tags) {
+        for (String tag : tags) {
+            try {
+                String status = jdbc.queryForObject("""
+                        SELECT status
+                        FROM tag_info
+                        WHERE tag_name = ? AND deleted_at IS NULL
+                        """, String.class, tag);
+                if (!"ENABLED".equals(status)) {
+                    throw new BusinessException(ErrorCode.BAD_REQUEST, "disabled tag cannot be used");
+                }
+            } catch (DataAccessException ignored) {
+                // New tags are created during relation insertion.
+            }
         }
     }
 

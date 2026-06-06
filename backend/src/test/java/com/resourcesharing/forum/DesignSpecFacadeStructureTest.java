@@ -12,6 +12,7 @@ import com.resourcesharing.forum.service.notification.NotificationDispatcher;
 import com.resourcesharing.forum.service.notification.NotificationEventService;
 import com.resourcesharing.forum.service.request.RequestRewardService;
 import com.resourcesharing.forum.service.resource.ResourceQueryService;
+import com.resourcesharing.forum.service.support.ContentModerationService;
 import com.resourcesharing.forum.service.system.AdminCatalogService;
 import com.resourcesharing.forum.service.system.AdminLogService;
 import com.resourcesharing.forum.service.system.AdminMemberService;
@@ -87,11 +88,13 @@ class DesignSpecFacadeStructureTest {
         assertNoLegacyDependency(NotificationEventService.class);
         assertNoLegacyDependency(NotificationDispatcher.class);
         assertNoLegacyDependency(com.resourcesharing.forum.service.notification.NotificationService.class);
+        assertNoLegacyDependency(ContentModerationService.class);
     }
 
     @Test
     void notificationFacadeAndDispatcherKeepInfrastructureBehindModuleBoundary() {
         assertNoFieldType(NotificationService.class, org.springframework.jdbc.core.JdbcTemplate.class);
+        assertNoFieldType(com.resourcesharing.forum.service.MemberService.class, org.springframework.jdbc.core.JdbcTemplate.class);
         assertNoFieldType(NotificationDispatcher.class, org.springframework.jdbc.core.JdbcTemplate.class);
     }
 

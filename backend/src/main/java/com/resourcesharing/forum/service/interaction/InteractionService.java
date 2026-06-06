@@ -5,6 +5,7 @@ import com.resourcesharing.forum.common.ErrorCode;
 import com.resourcesharing.forum.common.PageResult;
 import com.resourcesharing.forum.service.notification.NotificationDispatcher;
 import com.resourcesharing.forum.service.resource.ResourceQueryService;
+import com.resourcesharing.forum.service.support.ContentModerationService;
 import com.resourcesharing.forum.service.support.ForumLookupService;
 import com.resourcesharing.forum.service.support.MappingSupport;
 import com.resourcesharing.forum.service.support.TxSupport;
@@ -29,6 +30,7 @@ public class InteractionService {
     private final ForumLookupService lookup;
     private final ResourceQueryService resourceQueryService;
     private final NotificationDispatcher notificationDispatcher;
+    private final ContentModerationService contentModerationService;
 
     public InteractionService(
             TxSupport txSupport,
@@ -36,7 +38,8 @@ public class InteractionService {
             MappingSupport mappings,
             ForumLookupService lookup,
             ResourceQueryService resourceQueryService,
-            NotificationDispatcher notificationDispatcher
+            NotificationDispatcher notificationDispatcher,
+            ContentModerationService contentModerationService
     ) {
         this.txSupport = txSupport;
         this.values = values;
@@ -44,6 +47,7 @@ public class InteractionService {
         this.lookup = lookup;
         this.resourceQueryService = resourceQueryService;
         this.notificationDispatcher = notificationDispatcher;
+        this.contentModerationService = contentModerationService;
     }
 
     public Map<String, Object> toggleResourceInteraction(Long resourceId, String action, Long accountId) {
@@ -160,14 +164,30 @@ public class InteractionService {
         if (jdbc == null) {
             return;
         }
-        int updated = jdbc.update("""
-                UPDATE comment_info
-                SET status = 'DELETED', deleted_at = NOW(3)
-                WHERE id = ? AND member_id = ? AND status = 'ACTIVE' AND deleted_at IS NULL
-                """, commentId, lookup.requireMemberId(accountId));
-        if (updated == 0) {
-            throw new BusinessException(ErrorCode.NOT_FOUND, "comment does not exist or cannot be deleted");
-        }
+        txSupport.required(() -> {
+            Long memberId = lookup.requireMemberId(accountId);
+            Map<String, Object> row;
+            try {
+                row = jdbc.queryForObject("""
+                        SELECT target_type, target_id
+                        FROM comment_info
+                        WHERE id = ? AND member_id = ? AND status = 'ACTIVE' AND deleted_at IS NULL
+                        FOR UPDATE
+                        """, (rs, rowNum) -> values.map(
+                        "targetType", rs.getString("target_type"),
+                        "targetId", rs.getLong("target_id")
+                ), commentId, memberId);
+            } catch (DataAccessException ignored) {
+                throw new BusinessException(ErrorCode.NOT_FOUND, "comment does not exist or cannot be deleted");
+            }
+            jdbc.update("""
+                    UPDATE comment_info
+                    SET status = 'DELETED', deleted_at = NOW(3)
+                    WHERE id = ? AND member_id = ? AND status = 'ACTIVE' AND deleted_at IS NULL
+                    """, commentId, memberId);
+            decrementCommentCount(jdbc, String.valueOf(row.get("targetType")), values.number(row.get("targetId"), 0L));
+            return null;
+        });
     }
 
     public Map<String, Object> likeComment(Long commentId, Long accountId) {
@@ -175,13 +195,16 @@ public class InteractionService {
         if (jdbc == null) {
             return values.map("id", commentId, "liked", true);
         }
-        Long memberId = lookup.requireMemberId(accountId);
-        jdbc.update("""
-                INSERT INTO user_interaction(member_id, target_type, target_id, action_type, status)
-                VALUES (?, 'COMMENT', ?, 'LIKE', 'ACTIVE')
-                ON DUPLICATE KEY UPDATE status = IF(status = 'ACTIVE', 'CANCELLED', 'ACTIVE'), update_time = NOW(3)
-                """, memberId, commentId);
-        return comment(commentId, accountId);
+        return txSupport.required(() -> {
+            Long memberId = lookup.requireMemberId(accountId);
+            ensureActiveComment(jdbc, commentId);
+            jdbc.update("""
+                    INSERT INTO user_interaction(member_id, target_type, target_id, action_type, status)
+                    VALUES (?, 'COMMENT', ?, 'LIKE', 'ACTIVE')
+                    ON DUPLICATE KEY UPDATE status = IF(status = 'ACTIVE', 'CANCELLED', 'ACTIVE'), update_time = NOW(3)
+                    """, memberId, commentId);
+            return comment(commentId, accountId);
+        });
     }
 
     private Map<String, Object> addComment(String targetType, Long targetId, String content, Long accountId, Long parentId, Long toMemberId) {
@@ -270,25 +293,35 @@ public class InteractionService {
     }
 
     private Long receiverForComment(JdbcTemplate jdbc, String targetType, Long targetId, Long parentId, Long requestedToMemberId) {
-        if (requestedToMemberId != null && requestedToMemberId != 0) {
-            return requestedToMemberId;
-        }
         if (parentId != null && parentId != 0) {
             try {
-                return jdbc.queryForObject("""
+                Long parentMemberId = jdbc.queryForObject("""
                         SELECT member_id
                         FROM comment_info
-                        WHERE id = ? AND status = 'ACTIVE' AND deleted_at IS NULL
-                        """, Long.class, parentId);
+                        WHERE id = ? AND target_type = ? AND target_id = ?
+                          AND parent_id IS NULL AND status = 'ACTIVE' AND deleted_at IS NULL
+                        """, Long.class, parentId, targetType, targetId);
+                if (requestedToMemberId != null && requestedToMemberId != 0 && !Objects.equals(requestedToMemberId, parentMemberId)) {
+                    throw new BusinessException(ErrorCode.BAD_REQUEST, "reply target member does not match parent comment");
+                }
+                return parentMemberId;
             } catch (DataAccessException ignored) {
                 throw new BusinessException(ErrorCode.NOT_FOUND, "parent comment does not exist");
             }
         }
         try {
             if ("REQUEST_POST".equals(targetType)) {
-                return jdbc.queryForObject("SELECT requester_id FROM request_post WHERE id = ? AND deleted_at IS NULL", Long.class, targetId);
+                return jdbc.queryForObject("""
+                        SELECT requester_id
+                        FROM request_post
+                        WHERE id = ? AND status = 'ONGOING' AND deleted_at IS NULL
+                        """, Long.class, targetId);
             }
-            return jdbc.queryForObject("SELECT publisher_id FROM resource_info WHERE id = ? AND deleted_at IS NULL", Long.class, targetId);
+            return jdbc.queryForObject("""
+                    SELECT publisher_id
+                    FROM resource_info
+                    WHERE id = ? AND status = 'PUBLISHED' AND deleted_at IS NULL
+                    """, Long.class, targetId);
         } catch (DataAccessException ignored) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "comment target does not exist");
         }
@@ -300,6 +333,25 @@ public class InteractionService {
             return;
         }
         jdbc.update("UPDATE resource_info SET comment_count = comment_count + 1 WHERE id = ?", targetId);
+    }
+
+    private void decrementCommentCount(JdbcTemplate jdbc, String targetType, Long targetId) {
+        if ("REQUEST_POST".equals(targetType)) {
+            jdbc.update("UPDATE request_post SET comment_count = GREATEST(comment_count - 1, 0) WHERE id = ?", targetId);
+            return;
+        }
+        jdbc.update("UPDATE resource_info SET comment_count = GREATEST(comment_count - 1, 0) WHERE id = ?", targetId);
+    }
+
+    private void ensureActiveComment(JdbcTemplate jdbc, Long commentId) {
+        Integer count = jdbc.queryForObject("""
+                SELECT COUNT(*)
+                FROM comment_info
+                WHERE id = ? AND status = 'ACTIVE' AND deleted_at IS NULL
+                """, Integer.class, commentId);
+        if (count == null || count == 0) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "comment does not exist");
+        }
     }
 
     private String normalizeTargetType(String targetType) {
@@ -315,6 +367,7 @@ public class InteractionService {
         if (normalized.isBlank() || normalized.length() > 500) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "comment content length must be between 1 and 500");
         }
+        contentModerationService.requireClean(normalized);
         return normalized;
     }
 

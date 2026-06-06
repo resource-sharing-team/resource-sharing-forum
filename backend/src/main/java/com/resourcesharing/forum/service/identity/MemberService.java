@@ -2,6 +2,7 @@ package com.resourcesharing.forum.service.identity;
 
 import com.resourcesharing.forum.common.BusinessException;
 import com.resourcesharing.forum.common.ErrorCode;
+import com.resourcesharing.forum.common.PageResult;
 import com.resourcesharing.forum.service.support.MappingSupport;
 import com.resourcesharing.forum.service.support.TxSupport;
 import com.resourcesharing.forum.service.support.ValueSupport;
@@ -10,6 +11,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
@@ -138,6 +141,56 @@ public class MemberService {
                 WHERE id = ?
                 """, newEmail, accountId);
         return userProfile(accountId);
+    }
+
+    public PageResult<Map<String, Object>> pointFlows(Long accountId, int page, int size) {
+        JdbcTemplate jdbc = txSupport.jdbc();
+        int safePage = Math.max(1, page);
+        int safeSize = Math.max(1, Math.min(100, size));
+        if (jdbc == null) {
+            return new PageResult<>(0, List.of(), safePage, safeSize);
+        }
+        if (accountId == null) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "please log in before viewing point flows");
+        }
+        Long memberId = jdbc.queryForObject("""
+                SELECT mp.id
+                FROM member_profile mp
+                JOIN user_account ua ON ua.id = mp.account_id
+                WHERE mp.account_id = ? AND mp.deleted_at IS NULL
+                  AND ua.status = 'NORMAL' AND ua.deleted_at IS NULL
+                """, Long.class, accountId);
+        if (memberId == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "member profile does not exist");
+        }
+        Long total = jdbc.queryForObject("""
+                SELECT COUNT(*)
+                FROM point_flow
+                WHERE member_id = ? AND deleted_at IS NULL
+                """, Long.class, memberId);
+        List<Map<String, Object>> list = jdbc.query("""
+                SELECT id, flow_type, scene, points_change, frozen_change, before_points, after_points,
+                       before_frozen_points, after_frozen_points, related_type, related_id, description, create_time
+                FROM point_flow
+                WHERE member_id = ? AND deleted_at IS NULL
+                ORDER BY create_time DESC, id DESC
+                LIMIT ?, ?
+                """, (rs, rowNum) -> values.map(
+                "id", rs.getLong("id"),
+                "flowType", rs.getString("flow_type"),
+                "scene", rs.getString("scene"),
+                "pointsChange", rs.getInt("points_change"),
+                "frozenChange", rs.getInt("frozen_change"),
+                "beforePoints", rs.getInt("before_points"),
+                "afterPoints", rs.getInt("after_points"),
+                "beforeFrozenPoints", rs.getInt("before_frozen_points"),
+                "afterFrozenPoints", rs.getInt("after_frozen_points"),
+                "relatedType", rs.getString("related_type") == null ? "" : rs.getString("related_type"),
+                "relatedId", rs.getObject("related_id") == null ? 0L : rs.getLong("related_id"),
+                "description", rs.getString("description") == null ? "" : rs.getString("description"),
+                "createTime", String.valueOf(rs.getObject("create_time", LocalDateTime.class))
+        ), memberId, (safePage - 1) * safeSize, safeSize);
+        return new PageResult<>(total == null ? 0 : total, list, safePage, safeSize);
     }
 
     private Map<String, Object> defaultUser(Long accountId) {

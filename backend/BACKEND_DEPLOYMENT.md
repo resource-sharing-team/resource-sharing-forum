@@ -2,7 +2,7 @@
 
 This guide deploys the Spring Boot backend with MySQL 8 by Docker Compose. The API contract is unchanged: controllers keep the existing `/api` and `/api/v1` routes and response wrapper. The deployment target follows the design documents: Maven + JDK 17 + Docker.
 
-For final assembly against `规范.docx` and the four PDF design documents, see `SPEC_DEPLOYMENT_ACCEPTANCE.md` and `BACKEND_DEPLOYMENT_TRACEABILITY.md`.
+For final assembly against the three Markdown design documents, `规范.docx`, and the four PDF design documents, see `SPEC_DEPLOYMENT_ACCEPTANCE.md` and `BACKEND_DEPLOYMENT_TRACEABILITY.md`. The Markdown documents are the primary readable reference for the current acceptance pass.
 
 ## Prerequisites
 

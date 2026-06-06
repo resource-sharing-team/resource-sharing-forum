@@ -34,6 +34,7 @@ public class ForumLookupService {
                     JOIN user_account ua ON ua.id = mp.account_id
                     WHERE mp.account_id = ? AND mp.deleted_at IS NULL
                       AND ua.status = 'NORMAL' AND ua.deleted_at IS NULL
+                      AND (ua.locked_until IS NULL OR ua.locked_until <= NOW(3))
                     """, Long.class, accountId);
         } catch (DataAccessException ignored) {
             return null;
@@ -66,6 +67,7 @@ public class ForumLookupService {
                     JOIN user_account ua ON ua.id = ap.account_id
                     WHERE ap.account_id = ? AND ap.deleted_at IS NULL
                       AND ua.status = 'NORMAL' AND ua.deleted_at IS NULL
+                      AND (ua.locked_until IS NULL OR ua.locked_until <= NOW(3))
                       AND ua.role IN ('ADMIN', 'SUPER_ADMIN', 'AUDITOR')
                     """, Long.class, accountId);
         } catch (DataAccessException ignored) {

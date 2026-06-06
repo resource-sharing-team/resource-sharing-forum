@@ -1,11 +1,14 @@
 # Spec Deployment Acceptance Matrix
 
-This matrix maps `规范.docx` and the four local PDF design documents to the current backend deployment and frontend handoff evidence. It is written for final project assembly and review; it does not add or change API routes.
+This matrix maps the three Markdown design documents, `规范.docx`, and the four local PDF design documents to the current backend deployment and frontend handoff evidence. The Markdown documents are the primary readable acceptance source; the Word/PDF files remain cross-check sources. This file is written for final project assembly and review; it does not add or change API routes.
 
 ## Source Documents
 
 | Document | Deployment-Relevant Requirements Used |
 | --- | --- |
+| `D:\图片\详细设计说明书.md` | Primary detailed-design source for high cohesion/low coupling, ACID, contract-first API wrappers, state-machine closure, security authorization, Spring Boot + MySQL 8.x + JWT, local file metadata storage, Maven + JDK 17 + Docker deployment, logging, frontend/backend separation, and backend-mediated downloads. |
+| `D:\图片\资源分享论坛——UML建模文档.md` | Primary flow source for registration/login, password recovery, profile maintenance, resource browsing/filtering/download, interactions, request/reward, report/appeal, notification, and admin guarded operations. |
+| `D:\图片\资源分享论坛——数据库设计说明书.md` | Primary database source for 35 core tables across 9 modules, class-to-table mapping, state-machine control, soft deletion, transaction consistency, point-flow traceability, notification event plus station-notice model, file metadata-only storage, indexes, and backend authorization. |
 | `规范.docx` | Keep Controllers unchanged, keep `DesignSpecForumService` as a facade, preserve `/api/v1`, preserve frontend integration, route state/points/logs/notifications through their module services, and do not expose real file paths. |
 | `详细设计说明书.pdf` | Runtime stack is Maven + JDK 17 + Docker, database is MySQL 8.x, auth is Spring Security + JWT, frontend and backend are separated, downloads must pass backend authorization, response format and pagination stay unified, pool guidance is min 10/max 50, Flyway or Liquibase manages schema versions, logs and backup/restore are required. |
 | `资源分享论坛——UML建模文档.pdf` | User/admin flows require login and permission checks, resource download rejects unavailable resources, resource lifecycle states close or open the frontend download entry, and admin operations are guarded. |

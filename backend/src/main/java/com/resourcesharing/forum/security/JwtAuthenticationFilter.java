@@ -58,6 +58,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     SELECT COUNT(*)
                     FROM user_account
                     WHERE id = ? AND status = 'NORMAL' AND deleted_at IS NULL
+                      AND (locked_until IS NULL OR locked_until <= NOW(3))
                     """, Integer.class, Long.parseLong(subject));
             return count != null && count > 0;
         } catch (RuntimeException exception) {

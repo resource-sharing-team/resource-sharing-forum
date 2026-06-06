@@ -39,7 +39,7 @@ public class GlobalExceptionHandler {
 
     private HttpStatus toStatus(ErrorCode errorCode) {
         return switch (errorCode) {
-            case BAD_REQUEST -> HttpStatus.BAD_REQUEST;
+            case BAD_REQUEST, SENSITIVE_CONTENT -> HttpStatus.BAD_REQUEST;
             case UNAUTHORIZED -> HttpStatus.UNAUTHORIZED;
             case FORBIDDEN -> HttpStatus.FORBIDDEN;
             case NOT_FOUND -> HttpStatus.NOT_FOUND;

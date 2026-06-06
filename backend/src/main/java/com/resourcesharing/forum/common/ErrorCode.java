@@ -2,6 +2,7 @@ package com.resourcesharing.forum.common;
 
 public enum ErrorCode {
     BAD_REQUEST(400, "请求参数错误"),
+    SENSITIVE_CONTENT(40002, "内容含敏感词"),
     UNAUTHORIZED(401, "请先登录后再操作"),
     FORBIDDEN(403, "当前账号无操作权限"),
     NOT_FOUND(404, "资源不存在"),

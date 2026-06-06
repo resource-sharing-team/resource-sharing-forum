@@ -6,6 +6,7 @@ import com.resourcesharing.forum.common.PageResult;
 import com.resourcesharing.forum.domain.statemachine.RequestStateMachine;
 import com.resourcesharing.forum.service.notification.NotificationDispatcher;
 import com.resourcesharing.forum.service.point.PointManager;
+import com.resourcesharing.forum.service.support.ContentModerationService;
 import com.resourcesharing.forum.service.support.ForumLookupService;
 import com.resourcesharing.forum.service.support.MappingSupport;
 import com.resourcesharing.forum.service.support.TxSupport;
@@ -33,6 +34,7 @@ public class RequestRewardService {
     private final PointManager pointManager;
     private final AdminLogService adminLogService;
     private final NotificationDispatcher notificationDispatcher;
+    private final ContentModerationService contentModerationService;
 
     public RequestRewardService(
             TxSupport txSupport,
@@ -41,7 +43,8 @@ public class RequestRewardService {
             ForumLookupService lookup,
             PointManager pointManager,
             AdminLogService adminLogService,
-            NotificationDispatcher notificationDispatcher
+            NotificationDispatcher notificationDispatcher,
+            ContentModerationService contentModerationService
     ) {
         this.txSupport = txSupport;
         this.values = values;
@@ -50,6 +53,7 @@ public class RequestRewardService {
         this.pointManager = pointManager;
         this.adminLogService = adminLogService;
         this.notificationDispatcher = notificationDispatcher;
+        this.contentModerationService = contentModerationService;
     }
 
     public PageResult<Map<String, Object>> listRequests(Map<String, String> params) {
@@ -91,6 +95,11 @@ public class RequestRewardService {
     }
 
     public Map<String, Object> createRequest(Long accountId, Map<String, Object> request) {
+        String title = normalizeRequestTitle(values.value(request, "title", ""));
+        String content = normalizeRequestContent(values.firstNonBlank(
+                values.value(request, "content", ""),
+                values.value(request, "description", "")
+        ));
         JdbcTemplate jdbc = txSupport.jdbc();
         if (jdbc == null) {
             return defaultRequest();
@@ -111,8 +120,8 @@ public class RequestRewardService {
                 } else {
                     statement.setLong(2, categoryId);
                 }
-                statement.setString(3, values.firstNonBlank(values.value(request, "title", ""), "Course resource request"));
-                statement.setString(4, values.firstNonBlank(values.value(request, "content", ""), values.value(request, "description", ""), "Need a complete course project resource package with backend APIs, database scripts, and run steps."));
+                statement.setString(3, title);
+                statement.setString(4, content);
                 statement.setString(5, values.firstNonBlank(values.value(request, "expectedFormat", ""), values.value(request, "format", ""), "unlimited"));
                 statement.setInt(6, reward);
                 statement.setObject(7, null);
@@ -202,9 +211,12 @@ public class RequestRewardService {
     }
 
     public Map<String, Object> replyRequest(Long requestId, Long accountId, Map<String, Object> request) {
+        Long resourceId = values.number(values.firstPresent(request, "resourceId", "referencedResourceId"), 0L);
+        String externalUrl = values.blankToNull(values.value(request, "externalUrl", ""));
+        String content = normalizeReplyContent(values.value(request, "content", ""), resourceId, externalUrl);
         JdbcTemplate jdbc = txSupport.jdbc();
         if (jdbc == null) {
-            return values.map("id", 1L, "requestId", requestId, "content", values.value(request, "content", ""), "accepted", false);
+            return values.map("id", 1L, "requestId", requestId, "content", content, "accepted", false);
         }
         return txSupport.required(() -> {
             Long memberId = lookup.requireMemberId(accountId);
@@ -220,6 +232,7 @@ public class RequestRewardService {
             if (!"ONGOING".equals(post.get("status"))) {
                 throw new BusinessException(ErrorCode.BAD_REQUEST, "Request is not ongoing");
             }
+            ensureReferencedResourcePublished(jdbc, resourceId);
             KeyHolder keyHolder = new GeneratedKeyHolder();
             jdbc.update(connection -> {
                 PreparedStatement statement = connection.prepareStatement("""
@@ -228,14 +241,13 @@ public class RequestRewardService {
                         """, Statement.RETURN_GENERATED_KEYS);
                 statement.setLong(1, requestId);
                 statement.setLong(2, memberId);
-                statement.setString(3, values.firstNonBlank(values.value(request, "content", ""), "I can provide relevant resources."));
-                Long resourceId = values.number(values.firstPresent(request, "resourceId", "referencedResourceId"), 0L);
+                statement.setString(3, content);
                 if (resourceId == 0) {
                     statement.setObject(4, null);
                 } else {
                     statement.setLong(4, resourceId);
                 }
-                statement.setString(5, values.blankToNull(values.value(request, "externalUrl", "")));
+                statement.setString(5, externalUrl);
                 return statement;
             }, keyHolder);
             jdbc.update("UPDATE request_post SET answer_count = answer_count + 1 WHERE id = ?", requestId);
@@ -243,6 +255,54 @@ public class RequestRewardService {
                     "Request received a new reply", "Your request received a new reply", "REQUEST_POST", requestId);
             return reply(values.key(keyHolder));
         });
+    }
+
+    private void ensureReferencedResourcePublished(JdbcTemplate jdbc, Long resourceId) {
+        if (resourceId == null || resourceId == 0) {
+            return;
+        }
+        Integer count = jdbc.queryForObject("""
+                SELECT COUNT(*)
+                FROM resource_info
+                WHERE id = ? AND status = 'PUBLISHED' AND deleted_at IS NULL
+                """, Integer.class, resourceId);
+        if (count == null || count == 0) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "referenced resource must be published");
+        }
+    }
+
+    private String normalizeRequestTitle(String title) {
+        String normalized = values.firstNonBlank(title);
+        if (normalized.length() < 5 || normalized.length() > 80) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "request title length must be between 5 and 80");
+        }
+        contentModerationService.requireClean(normalized);
+        return normalized;
+    }
+
+    private String normalizeRequestContent(String content) {
+        String normalized = values.firstNonBlank(content);
+        if (normalized.length() < 20 || normalized.length() > 500) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "request content length must be between 20 and 500");
+        }
+        contentModerationService.requireClean(normalized);
+        return normalized;
+    }
+
+    private String normalizeReplyContent(String content, Long resourceId, String externalUrl) {
+        String normalized = values.firstNonBlank(content);
+        boolean hasResource = resourceId != null && resourceId != 0;
+        boolean hasExternalUrl = externalUrl != null && !externalUrl.isBlank();
+        if (normalized.isBlank() && !hasResource && !hasExternalUrl) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "reply content, referenced resource, or external URL is required");
+        }
+        if (!normalized.isBlank() && normalized.length() > 1000) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "reply content length must be at most 1000");
+        }
+        if (!normalized.isBlank()) {
+            contentModerationService.requireClean(normalized);
+        }
+        return normalized;
     }
 
     public Map<String, Object> settleRequest(Long requestId, Long accountId, Map<String, Object> request) {

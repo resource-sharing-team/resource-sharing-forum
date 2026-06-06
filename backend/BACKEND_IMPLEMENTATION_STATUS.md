@@ -137,6 +137,19 @@
   - business and validation exceptions are logged at `WARN`
   - unexpected system exceptions are logged at `ERROR`
   - unified API error responses remain unchanged
+- Tightened authenticated account guards against the three Markdown design documents:
+  - JWT authentication now rejects accounts whose `locked_until` is still in the future
+  - shared member/admin lookup now requires `status=NORMAL`, no soft delete, and no active temporary lock
+  - protected member/admin workflows therefore reject disabled, deleted, and temporarily locked accounts before business execution
+  - resource details now expose non-`PUBLISHED` resources only to the publisher or a normal unlocked administrator
+  - comment creation now requires a commentable target: resources must be `PUBLISHED`, requests must be `ONGOING`, and replies must reference an active top-level parent on the same target
+  - comment deletion now soft-deletes only the owner's active comment and decrements the target comment count with a non-negative guard
+  - comment likes now require an active, non-deleted comment before writing `user_interaction`
+  - comment creation, reply, and edit now validate content against enabled `sensitive_word` rules before writing comments
+  - request replies that reference an internal resource now require that resource to be `PUBLISHED`
+  - request publishing now validates title and content length plus enabled `sensitive_word` rules before writing `request_post`
+  - request replies now require content, a published referenced resource, or an external URL before writing `request_reply`; provided reply content is length-checked and sensitive-word checked
+  - resource publishing now validates title, description, summary, tags, sensitive words, and enabled second-level category before writing `resource_info`
 - Added handoff documents required by the spec:
   - `API_CONTRACT.md`
   - `FRONTEND_INTEGRATION_GUIDE.md`
@@ -148,7 +161,7 @@
 - Added deployment script regression tests for the production acceptance script:
   - missing `.env` fails before Docker commands
   - `-SkipBuild` validates `.env` and then reports missing Docker through a controlled no-Docker PATH
-- Tightened deployment alignment against the local `规范.docx` and four PDF extracts:
+- Tightened deployment alignment against the three Markdown design documents, local `规范.docx`, and four PDF extracts:
   - MySQL Compose now uses server-side `utf8mb4` while the JDBC URL avoids invalid Java charset aliases
   - Compose volumes now use stable explicit names for MySQL data and backend uploads
   - deploy, backup, and restore scripts now pass the supplied `.env` to Docker Compose through `--env-file`
@@ -210,7 +223,7 @@
 - `scripts/verify-production-acceptance.ps1` documents and automates the Docker-host production acceptance chain.
 - `scripts/verify-frontend-integration.ps1` documents and automates local no-database backend plus `web_user` real-backend contract smoke.
 - `scripts/verify-local-acceptance.ps1` documents and automates the current no-Docker local acceptance gate.
-- `SPEC_DEPLOYMENT_ACCEPTANCE.md` maps `规范.docx` and the four PDFs to deployment, API, database, security, logging, backup, and frontend-handoff evidence.
+- `SPEC_DEPLOYMENT_ACCEPTANCE.md` maps the three Markdown design documents, `规范.docx`, and the four PDFs to deployment, API, database, security, logging, backup, and frontend-handoff evidence.
 - `LegacyDesignSpecForumService` still contains duplicated legacy code during the transition, but it is no longer the facade entrypoint for the migrated design-spec module services.
 - Controllers continue to call the facade.
 - API responses remain `{ code, message, data, timestamp }`.
