@@ -27,4 +27,4 @@
 **/.vite/
 **/.env.local
 /web_admin/*.log
-
+/web_user/*.log
