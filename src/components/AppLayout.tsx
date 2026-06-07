@@ -1,102 +1,54 @@
-import {
-  BookOutlined,
-  CloudUploadOutlined,
-  CompassOutlined,
-  HomeOutlined,
-  LoginOutlined,
-  PlusOutlined,
-  UserOutlined,
-} from '@ant-design/icons';
-import { Avatar, Button, Dropdown, Layout, Menu, Space, Typography } from 'antd';
 import { useEffect } from 'react';
-import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Outlet, useLocation } from 'react-router-dom';
 import { useMe } from '../api/hooks';
 import { useAuthStore } from '../store/auth';
 
-const navItems = [
-  { key: '/', icon: <HomeOutlined />, label: <Link to="/">首页</Link> },
-  { key: '/resources', icon: <BookOutlined />, label: <Link to="/resources">资源库</Link> },
-  { key: '/demands', icon: <CompassOutlined />, label: <Link to="/demands">求资源</Link> },
-  { key: '/profile', icon: <UserOutlined />, label: <Link to="/profile">个人中心</Link> },
-];
-
 function selectedKey(pathname: string) {
-  if (pathname.startsWith('/resources')) return '/resources';
-  if (pathname.startsWith('/demands')) return '/demands';
-  if (pathname.startsWith('/profile')) return '/profile';
+  if (pathname.startsWith('/resources') || pathname.startsWith('/publish-resource')) return '/resources';
+  if (pathname.startsWith('/demands') || pathname.startsWith('/publish-demand')) return '/demands';
+  if (pathname.startsWith('/profile') || pathname.startsWith('/user-center')) return '/profile';
   return '/';
 }
 
 export default function AppLayout() {
   const location = useLocation();
-  const navigate = useNavigate();
-  const { user, setUser, logout } = useAuthStore();
-  const meQuery = useMe();
+  const { token, user, setUser } = useAuthStore();
+  const meQuery = useMe(Boolean(token));
   const activeUser = user || meQuery.data;
+  const active = selectedKey(location.pathname);
 
   useEffect(() => {
     if (meQuery.data) setUser(meQuery.data);
   }, [meQuery.data, setUser]);
 
   return (
-    <Layout className="app-shell">
-      <header className="topbar">
-        <Link className="brand" to="/">
-          <span className="brand-mark">
-            <BookOutlined />
-          </span>
-          <span className="brand-name">
-            资源分享论坛
-            <span className="brand-subtitle">User Web Console</span>
-          </span>
+    <div className="app-shell">
+      <header className="header">
+        <Link className="logo" to="/">
+          资源分享论坛
         </Link>
-
-        <Menu
-          className="topbar-menu"
-          mode="horizontal"
-          selectedKeys={[selectedKey(location.pathname)]}
-          items={navItems}
-        />
-
-        <div className="topbar-actions">
-          <Button icon={<CloudUploadOutlined />} onClick={() => navigate('/publish-resource')}>
-            发布资源
-          </Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/publish-demand')}>
-            发布求资源
-          </Button>
-          {activeUser ? (
-            <Dropdown
-              menu={{
-                items: [
-                  { key: 'profile', label: '个人中心', onClick: () => navigate('/profile') },
-                  {
-                    key: 'logout',
-                    label: '退出登录',
-                    danger: true,
-                    onClick: () => {
-                      logout();
-                      navigate('/login');
-                    },
-                  },
-                ],
-              }}
-            >
-              <Space style={{ cursor: 'pointer' }}>
-                <Avatar src={activeUser.avatar} />
-                <Typography.Text strong>{activeUser.nickname}</Typography.Text>
-              </Space>
-            </Dropdown>
-          ) : (
-            <Button icon={<LoginOutlined />} onClick={() => navigate('/login')}>
-              登录
-            </Button>
-          )}
-        </div>
+        <nav className="nav">
+          <Link className={active === '/' ? 'active' : undefined} to="/">
+            首页
+          </Link>
+          <Link className={active === '/resources' ? 'active' : undefined} to="/resources">
+            资源库
+          </Link>
+          <Link className={active === '/demands' ? 'active' : undefined} to="/demands">
+            求资源
+          </Link>
+          <Link className={active === '/profile' ? 'active' : undefined} to="/profile">
+            个人中心
+          </Link>
+        </nav>
+        <Link className="user-bar" to={activeUser ? '/profile' : '/login'}>
+          {activeUser?.avatar ? <img className="avatar" src={activeUser.avatar} alt="头像" /> : <div className="avatar" />}
+          <span>{activeUser?.nickname || '未登录'}</span>
+        </Link>
       </header>
       <main className="page">
         <Outlet />
       </main>
-    </Layout>
+    </div>
   );
 }

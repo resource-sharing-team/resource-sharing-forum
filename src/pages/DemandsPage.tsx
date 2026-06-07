@@ -1,50 +1,63 @@
-import { PlusOutlined } from '@ant-design/icons';
-import { Button, Col, Empty, Pagination, Row, Spin } from 'antd';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useDemands } from '../api/hooks';
+import { useCategories, useDemands } from '../api/hooks';
+import { InlineApiError } from '../components/ApiState';
 import DemandCard from '../components/DemandCard';
 import ListingFilter from '../components/ListingFilter';
 import type { ListParams } from '../types';
 
 export default function DemandsPage() {
   const navigate = useNavigate();
-  const [params, setParams] = useState<ListParams>({ page: 1, pageSize: 6, sort: 'latest' });
+  const [params, setParams] = useState<ListParams>({ page: 1, pageSize: 5, sort: 'latest' });
   const demandsQuery = useDemands(params);
+  const categoriesQuery = useCategories();
   const items = demandsQuery.data?.items || [];
+  const total = demandsQuery.data?.total || 0;
+  const totalPages = Math.max(1, Math.ceil(total / (params.pageSize || 5)));
+
+  const goPage = (page: number) => setParams((prev) => ({ ...prev, page }));
 
   return (
-    <>
-      <div className="section-head">
-        <div>
-          <p className="section-kicker">REQUEST BOARD</p>
-          <h1 className="section-title">求资源列表</h1>
-        </div>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/publish-demand')}>
-          发布求资源
-        </Button>
+    <div className="container">
+      <div className="page-header">
+        <h2>求资源</h2>
+        <button className="publish-btn" onClick={() => navigate('/publish-demand')}>
+          + 发布求资源
+        </button>
       </div>
 
-      <ListingFilter mode="demands" value={params} onChange={setParams} />
+      <ListingFilter mode="demands" value={params} categories={categoriesQuery.data || []} categoriesError={categoriesQuery.error} onChange={setParams} />
 
-      <Spin spinning={demandsQuery.isLoading}>
-        <Row gutter={[16, 16]}>
+      <div className="card">
+        <div className="card-title">求资源列表</div>
+        <div className="card-body">
           {items.map((demand) => (
-            <Col xs={24} md={12} key={demand.id}>
-              <DemandCard demand={demand} />
-            </Col>
+            <DemandCard demand={demand} key={demand.id} />
           ))}
-        </Row>
-        {!items.length && !demandsQuery.isLoading && <Empty description="暂无匹配求资源" style={{ marginTop: 40 }} />}
-      </Spin>
+          {demandsQuery.isError && <InlineApiError error={demandsQuery.error} />}
+          {!items.length && <div style={{ padding: 40, textAlign: 'center', color: '#999' }}>{demandsQuery.isLoading ? '加载中...' : '暂无求资源需求'}</div>}
+        </div>
+      </div>
 
-      <Pagination
-        style={{ marginTop: 22, textAlign: 'right' }}
-        current={params.page}
-        pageSize={params.pageSize}
-        total={demandsQuery.data?.total || 0}
-        onChange={(page, pageSize) => setParams((prev) => ({ ...prev, page, pageSize }))}
-      />
-    </>
+      {totalPages > 1 && (
+        <div className="page-bar">
+          {(params.page || 1) > 1 && (
+            <button className="page-item" onClick={() => goPage((params.page || 1) - 1)}>
+              上一页
+            </button>
+          )}
+          {Array.from({ length: totalPages }, (_, index) => index + 1).map((page) => (
+            <button className={`page-item ${page === (params.page || 1) ? 'active' : ''}`} key={page} onClick={() => goPage(page)}>
+              {page}
+            </button>
+          ))}
+          {(params.page || 1) < totalPages && (
+            <button className="page-item" onClick={() => goPage((params.page || 1) + 1)}>
+              下一页
+            </button>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

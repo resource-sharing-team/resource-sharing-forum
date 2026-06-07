@@ -1,419 +1,463 @@
 import {
   BellOutlined,
-  EditOutlined,
+  DeleteOutlined,
+  GiftOutlined,
   HeartOutlined,
+  LikeOutlined,
   LockOutlined,
-  MailOutlined,
-  SafetyOutlined,
-  StarOutlined,
-  TrophyOutlined,
-  UploadOutlined,
+  LoginOutlined,
+  LogoutOutlined,
+  MessageOutlined,
+  SafetyCertificateOutlined,
+  UserOutlined,
 } from '@ant-design/icons';
+import { message } from 'antd';
+import { type ReactNode, useEffect, useMemo, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  Avatar,
-  Badge,
-  Button,
-  Card,
-  Col,
-  Form,
-  Input,
-  List,
-  Progress,
-  Row,
-  Space,
-  Spin,
-  Tabs,
-  Tag,
-  Typography,
-  message,
-} from 'antd';
-import type { ReactNode } from 'react';
-import { Link } from 'react-router-dom';
-import { useBindEmail, useChangePassword, useMe, useProfileSummary, useUpdateMe } from '../api/hooks';
+  useBindEmail,
+  useCancelDemand,
+  useChangePassword,
+  useMarkAllNotificationsRead,
+  useMarkNotificationRead,
+  useMe,
+  useNotifications,
+  useResourceAction,
+  useUpdateMe,
+  useUserFavorites,
+  useUserLikes,
+  useUserLoginRecords,
+  useUserRequests,
+  useUserResources,
+} from '../api/hooks';
+import { ApiError } from '../components/ApiState';
 import { useAuthStore } from '../store/auth';
+import type { Demand, Resource } from '../types';
 
-const pointRules = [
-  { action: '每日登录', points: '+5', note: '每日首次登录获得' },
-  { action: '发布资源', points: '+20', note: '审核通过后发放' },
-  { action: '资源被下载', points: '+2', note: '每个用户每日限计 1 次' },
-  { action: '回答被采纳', points: '+30', note: '求资源发布者采纳后发放' },
-  { action: '违规下架', points: '-50', note: '严重违规会冻结发布权限' },
+type TabKey = 'profile' | 'my-resource' | 'my-demand' | 'my-fav' | 'my-like' | 'member' | 'message' | 'security' | 'login-log';
+
+const menu: Array<{ key: TabKey; label: string; icon: ReactNode }> = [
+  { key: 'profile', label: '个人资料', icon: <UserOutlined /> },
+  { key: 'my-resource', label: '我发布的资源', icon: <GiftOutlined /> },
+  { key: 'my-demand', label: '我的求资源', icon: <MessageOutlined /> },
+  { key: 'my-fav', label: '我的收藏', icon: <HeartOutlined /> },
+  { key: 'my-like', label: '我的点赞', icon: <LikeOutlined /> },
+  { key: 'member', label: '会员中心', icon: <SafetyCertificateOutlined /> },
+  { key: 'message', label: '消息中心', icon: <BellOutlined /> },
+  { key: 'security', label: '安全中心', icon: <LockOutlined /> },
+  { key: 'login-log', label: '登录记录', icon: <LoginOutlined /> },
 ];
 
-const memberTiers = [
-  { tier: 'Lv.1 新手', range: '0-299', rights: '每日下载 5 次，单资源最多 1 个附件' },
-  { tier: 'Lv.2 分享者', range: '300-799', rights: '每日下载 12 次，可发布求资源' },
-  { tier: 'Lv.3 活跃用户', range: '800-1199', rights: '每日下载 25 次，附件优先解析' },
-  { tier: 'Lv.4 贡献者', range: '1200-1999', rights: '每日下载 50 次，发布资源优先审核' },
-  { tier: 'Lv.5 共建者', range: '2000+', rights: '每日下载 100 次，专属标识与批量下载' },
-];
+const tabKeys = new Set<TabKey>(menu.map((item) => item.key));
 
-const currentBenefits = ['每日下载 50 次', '发布资源优先审核', '单资源最多上传 5 个附件', '可参与资源评分与举报优先处理'];
+function getTabKey(value: string | null): TabKey {
+  return value && tabKeys.has(value as TabKey) ? (value as TabKey) : 'profile';
+}
 
 export default function ProfilePage() {
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const active = getTabKey(searchParams.get('tab'));
   const meQuery = useMe();
-  const summaryQuery = useProfileSummary();
   const updateMe = useUpdateMe();
   const changePassword = useChangePassword();
   const bindEmail = useBindEmail();
-  const setUser = useAuthStore((state) => state.setUser);
+  const cancelDemand = useCancelDemand();
+  const resourceAction = useResourceAction();
+  const userResourcesQuery = useUserResources(active === 'my-resource');
+  const userRequestsQuery = useUserRequests(active === 'my-demand');
+  const userFavoritesQuery = useUserFavorites(active === 'my-fav');
+  const userLikesQuery = useUserLikes(active === 'my-like');
+  const notificationsQuery = useNotifications(true);
+  const markNotificationRead = useMarkNotificationRead();
+  const markAllNotificationsRead = useMarkAllNotificationsRead();
+  const loginRecordsQuery = useUserLoginRecords(active === 'login-log');
+  const { setUser, logout } = useAuthStore();
   const user = meQuery.data;
+  const unreadCount = notificationsQuery.data?.items.filter((item) => item.unread).length || 0;
 
-  if (meQuery.isLoading || !user) return <Spin fullscreen />;
+  const [profile, setProfile] = useState({ nickname: '', bio: '', avatar: '' });
+  const [password, setPassword] = useState({ oldPassword: '', newPassword: '', confirmPassword: '' });
+  const [email, setEmail] = useState({ email: '' });
 
-  const summary = summaryQuery.data;
-  const unreadCount = summary?.messages.filter((item) => item.unread).length || 0;
-  const expPercent = Math.min(100, Math.round((user.points / user.expNeeded) * 100));
+  useEffect(() => {
+    if (user) {
+      setProfile({ nickname: user.nickname, bio: user.bio, avatar: user.avatar });
+      setEmail((prev) => ({ ...prev, email: user.email }));
+    }
+  }, [user]);
+
+  const percent = useMemo(() => {
+    if (!user) return 0;
+    return Math.min(100, Math.round((user.points / Math.max(user.expNeeded, 1)) * 100));
+  }, [user]);
+
+  if (meQuery.error) {
+    return <div className="container"><div className="card"><div className="card-body"><ApiError error={meQuery.error} /></div></div></div>;
+  }
+
+  if (!user) {
+    return <div className="container"><div className="card"><div className="card-body">加载中...</div></div></div>;
+  }
+
+  async function saveProfile() {
+    if (profile.nickname.trim().length < 2) {
+      message.warning('昵称需 2-20 个字符');
+      return;
+    }
+    try {
+      const next = await updateMe.mutateAsync(profile);
+      setUser(next);
+      message.success('保存成功');
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '接口调用失败');
+    }
+  }
+
+  async function submitPassword() {
+    if (password.newPassword.length < 8) {
+      message.warning('新密码至少 8 位');
+      return;
+    }
+    if (password.newPassword !== password.confirmPassword) {
+      message.warning('两次密码不一致');
+      return;
+    }
+    try {
+      await changePassword.mutateAsync({ oldPassword: password.oldPassword, newPassword: password.newPassword });
+      setPassword({ oldPassword: '', newPassword: '', confirmPassword: '' });
+      message.success('密码修改成功');
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '接口调用失败');
+    }
+  }
+
+  async function submitEmail() {
+    try {
+      const next = await bindEmail.mutateAsync({ email: email.email });
+      setUser(next);
+      message.success('邮箱更换成功');
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '接口调用失败');
+    }
+  }
+
+  async function removeDemand(item: Demand) {
+    if (!window.confirm(`确认取消求资源「${item.title}」吗？`)) return;
+    try {
+      await cancelDemand.mutateAsync(item.id);
+      message.success('已取消该求资源请求');
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '接口调用失败');
+    }
+  }
+
+  async function cancelFavorite(item: Resource) {
+    try {
+      await resourceAction.mutateAsync({ id: item.id, action: 'favorite' });
+      message.success('已取消收藏');
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '接口调用失败');
+    }
+  }
+
+  async function cancelLike(item: Resource) {
+    try {
+      await resourceAction.mutateAsync({ id: item.id, action: 'like' });
+      message.success('已取消点赞');
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '接口调用失败');
+    }
+  }
+
+  function switchTab(tab: TabKey) {
+    const next = new URLSearchParams(searchParams);
+    if (tab === 'profile') {
+      next.delete('tab');
+    } else {
+      next.set('tab', tab);
+    }
+    setSearchParams(next);
+  }
 
   return (
-    <>
-      <section className="profile-cover">
-        <div className="profile-id">
-          <Avatar size={76} src={user.avatar} />
-          <div>
-            <Typography.Title level={2} style={{ margin: 0 }}>{user.nickname}</Typography.Title>
-            <Space wrap>
-              <Tag color="green">{user.level}</Tag>
-              <Typography.Text type="secondary">{user.username}</Typography.Text>
-              <Typography.Text type="secondary">{user.email}</Typography.Text>
-              <Tag color={user.emailVerified ? 'blue' : 'orange'}>{user.emailVerified ? '邮箱已绑定' : '邮箱未绑定'}</Tag>
-            </Space>
-          </div>
-        </div>
-        <div className="profile-growth">
-          <Typography.Text strong>积分成长</Typography.Text>
-          <Progress percent={expPercent} strokeColor="#2d6a4f" />
-          <Typography.Text type="secondary">{user.points} / {user.expNeeded}，距离 Lv.5 还差 {Math.max(0, user.expNeeded - user.points)} 分</Typography.Text>
-        </div>
-      </section>
-
-      <Tabs
-        defaultActiveKey="profile"
-        items={[
-          {
-            key: 'profile',
-            label: (
-              <span>
-                <EditOutlined /> 个人资料
-              </span>
-            ),
-            children: (
-              <div className="detail-hero">
-                <Form
-                  layout="vertical"
-                  initialValues={user}
-                  onFinish={async (values) => {
-                    const next = await updateMe.mutateAsync(values);
-                    setUser(next);
-                    message.success('资料已保存');
-                  }}
-                >
-                  <Form.Item label="用户名" name="username">
-                    <Input disabled />
-                  </Form.Item>
-                  <Form.Item label="昵称" name="nickname" rules={[{ required: true, message: '请输入昵称' }]}>
-                    <Input maxLength={20} />
-                  </Form.Item>
-                  <Form.Item label="简介" name="bio">
-                    <Input.TextArea rows={4} maxLength={100} showCount />
-                  </Form.Item>
-                  <Form.Item label="联系方式" name="contact">
-                    <Input placeholder="邮箱 / QQ / 微信，仅管理员可见" />
-                  </Form.Item>
-                  <Form.Item label="头像地址" name="avatar">
-                    <Input prefix={<UploadOutlined />} />
-                  </Form.Item>
-                  <Button type="primary" htmlType="submit" loading={updateMe.isPending}>
-                    保存修改
-                  </Button>
-                </Form>
+    <div className="container">
+      <div className="main-wrapper">
+        <aside className="left-menu">
+          <div className="card">
+            <div className="card-body">
+              <div className="user-info">
+                {user.avatar ? <img className="user-avatar" src={user.avatar} alt="头像" /> : <div className="user-avatar" />}
+                <div className="user-text">
+                  <h3>{user.nickname}</h3>
+                  <p>{user.level} | 积分：{user.points}</p>
+                  <div className="level-box">
+                    <div className="level-text">
+                      <span>升级进度</span>
+                      <span>{user.points}/{user.expNeeded}</span>
+                    </div>
+                    <div className="progress-bar">
+                      <div className="progress" style={{ width: `${percent}%` }} />
+                    </div>
+                  </div>
+                </div>
               </div>
-            ),
-          },
-          {
-            key: 'member',
-            label: (
-              <span>
-                <TrophyOutlined /> 会员中心
-              </span>
-            ),
-            children: <MemberCenter points={user.points} level={user.level} expNeeded={user.expNeeded} />,
-          },
-          {
-            key: 'content',
-            label: '我的内容',
-            children: (
-              <Space direction="vertical" size={20} style={{ width: '100%' }}>
-                <ProfileList
-                  title="我发布的资源"
-                  data={summary?.resources || []}
-                  render={(item) => <Link to={`/resources/${item.id}`}>{item.title}</Link>}
-                  meta={(item) => `${item.date} / ${item.type} / 下载 ${item.downloads}`}
-                />
-                <ProfileList
-                  title="我的求资源"
-                  data={summary?.demands || []}
-                  render={(item) => <Link to={`/demands/${item.id}`}>{item.title}</Link>}
-                  meta={(item) => `${item.date} / ${item.status === 'solved' ? '已解决' : '进行中'} / 回答 ${item.replyCount}`}
-                />
-              </Space>
-            ),
-          },
-          {
-            key: 'marks',
-            label: (
-              <span>
-                <StarOutlined /> 收藏点赞
-              </span>
-            ),
-            children: (
-              <Space direction="vertical" size={20} style={{ width: '100%' }}>
-                <ProfileList
-                  title="我的收藏"
-                  data={summary?.favorites || []}
-                  render={(item) => <Link to={`/resources/${item.id}`}>{item.title}</Link>}
-                  meta={(item) => `${item.date} / ${item.author}`}
-                />
-                <ProfileList
-                  title="我的点赞"
-                  icon={<HeartOutlined />}
-                  data={summary?.likes || []}
-                  render={(item) => <Link to={`/resources/${item.id}`}>{item.title}</Link>}
-                  meta={(item) => `${item.date} / ${item.author}`}
-                />
-              </Space>
-            ),
-          },
-          {
-            key: 'message',
-            label: (
-              <span>
-                <BellOutlined /> 消息中心
-                {unreadCount > 0 && <Badge className="tab-badge" count={unreadCount} size="small" />}
-              </span>
-            ),
-            children: (
-              <ProfileList
-                title="站内消息"
-                data={summary?.messages || []}
-                render={(item) => (
-                  <Space>
-                    {item.unread && <Tag color="red">未读</Tag>}
-                    {item.title}
-                  </Space>
-                )}
-                meta={(item) => `${item.date} / ${item.content}`}
-              />
-            ),
-          },
-          {
-            key: 'security',
-            label: (
-              <span>
-                <LockOutlined /> 安全中心
-              </span>
-            ),
-            children: (
-              <SecurityCenter
-                email={user.email}
-                emailVerified={user.emailVerified}
-                passwordUpdatedAt={user.passwordUpdatedAt}
-                loginLogs={summary?.loginLogs || []}
-                onChangePassword={async (values) => {
-                  await changePassword.mutateAsync(values);
-                  message.success('密码已更新');
-                }}
-                onBindEmail={async (values) => {
-                  const next = await bindEmail.mutateAsync(values);
-                  setUser(next);
-                  message.success('邮箱已绑定');
-                }}
-                passwordLoading={changePassword.isPending}
-                emailLoading={bindEmail.isPending}
-              />
-            ),
-          },
-        ]}
-      />
-    </>
-  );
-}
+            </div>
+          </div>
 
-function MemberCenter({ points, level, expNeeded }: { points: number; level: string; expNeeded: number }) {
-  return (
-    <Space direction="vertical" size={18} style={{ width: '100%' }}>
-      <section className="member-hero">
-        <div>
-          <p className="section-kicker">MEMBERSHIP</p>
-          <Typography.Title level={3} style={{ marginTop: 0 }}>当前等级：{level}</Typography.Title>
-          <Typography.Paragraph type="secondary">
-            当前积分 {points}，下一等级需要 {expNeeded} 分。积分用于衡量贡献，不直接作为现金价值。
-          </Typography.Paragraph>
-        </div>
-        <div className="current-benefits">
-          {currentBenefits.map((benefit) => (
-            <Tag color="green" key={benefit}>{benefit}</Tag>
+          {menu.map((item) => (
+            <div className={`menu-item ${active === item.key ? 'active' : ''}`} key={item.key} onClick={() => switchTab(item.key)}>
+              <span className="menu-icon">{item.icon}</span>
+              <span className="menu-text">{item.label}</span>
+              {item.key === 'message' && unreadCount > 0 && <span className="menu-badge">{unreadCount}</span>}
+            </div>
           ))}
-        </div>
-      </section>
+          <div
+            className="menu-item"
+            style={{ color: '#f44336' }}
+            onClick={() => {
+              logout();
+              navigate('/login');
+            }}
+          >
+            <span className="menu-icon"><LogoutOutlined /></span>
+            <span className="menu-text">退出登录</span>
+          </div>
+        </aside>
 
-      <Row gutter={[16, 16]}>
-        <Col xs={24} lg={10}>
-          <Card title="积分规则" className="rule-card">
-            <List
-              dataSource={pointRules}
-              renderItem={(item) => (
-                <List.Item>
-                  <List.Item.Meta title={<Space><Tag color={item.points.startsWith('+') ? 'green' : 'red'}>{item.points}</Tag>{item.action}</Space>} description={item.note} />
-                </List.Item>
-              )}
-            />
-          </Card>
-        </Col>
-        <Col xs={24} lg={14}>
-          <Card title="会员权益规则" className="rule-card">
-            <List
-              dataSource={memberTiers}
-              renderItem={(item) => (
-                <List.Item className={item.tier === level ? 'tier-current' : undefined}>
-                  <List.Item.Meta
-                    title={<Space><Tag color={item.tier === level ? 'green' : 'default'}>{item.tier}</Tag><Typography.Text>{item.range} 分</Typography.Text></Space>}
-                    description={item.rights}
-                  />
-                </List.Item>
-              )}
-            />
-          </Card>
-        </Col>
-      </Row>
-    </Space>
+        <main className="right-content">
+          {active === 'profile' && (
+            <div className="card">
+              <div className="card-title">个人资料</div>
+              <div className="card-body">
+                <div className="avatar-preview">
+                  {profile.avatar ? <img className="avatar-preview-img" src={profile.avatar} alt="头像" /> : <div className="avatar-preview-img" />}
+                  <div>
+                    <input className="form-input" value={profile.avatar} onChange={(event) => setProfile((prev) => ({ ...prev, avatar: event.target.value }))} placeholder="头像地址" />
+                    <div className="tip">支持图片 URL，后续可接入上传接口</div>
+                  </div>
+                </div>
+                <div className="form-item">
+                  <label className="form-label">用户名</label>
+                  <input className="form-input" value={user.username} readOnly />
+                </div>
+                <div className="form-item">
+                  <label className="form-label">昵称</label>
+                  <input className="form-input" value={profile.nickname} onChange={(event) => setProfile((prev) => ({ ...prev, nickname: event.target.value }))} maxLength={20} />
+                </div>
+                <div className="form-item">
+                  <label className="form-label">简介</label>
+                  <textarea className="form-textarea" value={profile.bio} onChange={(event) => setProfile((prev) => ({ ...prev, bio: event.target.value }))} maxLength={100} />
+                </div>
+                <button className="btn-primary" onClick={saveProfile} disabled={updateMe.isPending}>保存修改</button>
+              </div>
+            </div>
+          )}
+
+          {active === 'my-resource' && <ListCard title="我发布的资源" items={userResourcesQuery.data?.items || []} loading={userResourcesQuery.isLoading} error={userResourcesQuery.error} getHref={(item: Resource) => `/resources/${item.id}`} render={(item: Resource) => item.title} meta={(item: Resource) => `${item.date} | 下载：${item.downloads}`} />}
+          {active === 'my-demand' && <ListCard title="我的求资源" items={userRequestsQuery.data?.items || []} loading={userRequestsQuery.isLoading} error={userRequestsQuery.error} getHref={(item: Demand) => `/demands/${item.id}`} render={(item: Demand) => item.title} meta={(item: Demand) => `悬赏：${item.points}积分 | 状态：${item.status === 'solved' ? '已解决' : '进行中'} | 回复：${item.replyCount}`} action={{ label: '取消', icon: <DeleteOutlined />, onClick: removeDemand, pending: cancelDemand.isPending }} />}
+          {active === 'my-fav' && <ListCard title="我的收藏" items={userFavoritesQuery.data?.items || []} loading={userFavoritesQuery.isLoading} error={userFavoritesQuery.error} getHref={(item: Resource) => `/resources/${item.id}`} render={(item: Resource) => item.title} meta={(item: Resource) => `${item.date} | ${item.type}`} action={{ label: '取消收藏', onClick: cancelFavorite, pending: resourceAction.isPending }} />}
+          {active === 'my-like' && <ListCard title="我的点赞" items={userLikesQuery.data?.items || []} loading={userLikesQuery.isLoading} error={userLikesQuery.error} getHref={(item: Resource) => `/resources/${item.id}`} render={(item: Resource) => item.title} meta={(item: Resource) => `${item.date} | ${item.author}`} action={{ label: '取消点赞', onClick: cancelLike, pending: resourceAction.isPending }} />}
+          {active === 'member' && <MemberCenter points={user.points} level={user.level} expNeeded={user.expNeeded} percent={percent} />}
+          {active === 'message' && <MessageCenter messages={notificationsQuery.data?.items || []} loading={notificationsQuery.isLoading} error={notificationsQuery.error} onRead={(id) => markNotificationRead.mutateAsync(id)} onReadAll={() => markAllNotificationsRead.mutateAsync()} pending={markNotificationRead.isPending || markAllNotificationsRead.isPending} />}
+          {active === 'security' && (
+            <>
+              <div className="card">
+                <div className="card-title">修改密码</div>
+                <div className="card-body">
+                  <div className="form-item"><label className="form-label">当前密码</label><input className="form-input" type="password" value={password.oldPassword} onChange={(event) => setPassword((prev) => ({ ...prev, oldPassword: event.target.value }))} /></div>
+                  <div className="form-item"><label className="form-label">新密码</label><input className="form-input" type="password" value={password.newPassword} onChange={(event) => setPassword((prev) => ({ ...prev, newPassword: event.target.value }))} /><div className="tip">8-20位，包含字母和数字</div></div>
+                  <div className="form-item"><label className="form-label">确认新密码</label><input className="form-input" type="password" value={password.confirmPassword} onChange={(event) => setPassword((prev) => ({ ...prev, confirmPassword: event.target.value }))} /></div>
+                  <button className="btn-primary" onClick={submitPassword} disabled={changePassword.isPending}>修改密码</button>
+                </div>
+              </div>
+              <div className="card">
+                <div className="card-title">更换邮箱</div>
+                <div className="card-body">
+                  <div className="form-item"><label className="form-label">当前邮箱</label><input className="form-input" value={user.email} readOnly /></div>
+                  <div className="form-item"><label className="form-label">新邮箱</label><input className="form-input" value={email.email} onChange={(event) => setEmail({ email: event.target.value })} /></div>
+                  <button className="btn-primary" onClick={submitEmail} disabled={bindEmail.isPending}>确认更换</button>
+                </div>
+              </div>
+            </>
+          )}
+          {active === 'login-log' && (
+            <div className="card">
+              <div className="card-title">最近登录记录</div>
+              <div className="card-body">
+                <table className="login-table">
+                  <thead><tr><th>登录时间</th><th>IP地址</th><th>设备/地理位置</th></tr></thead>
+                  <tbody>
+                    {(loginRecordsQuery.data?.items || []).map((log) => (
+                      <tr key={log.id}><td>{log.time}</td><td>{log.ip}</td><td>{log.device} {log.location}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+                {loginRecordsQuery.isLoading && <div className="tip" style={{ marginTop: 12 }}>加载中...</div>}
+                {loginRecordsQuery.error ? <ApiError error={loginRecordsQuery.error} /> : null}
+                {!loginRecordsQuery.isLoading && !loginRecordsQuery.error && !(loginRecordsQuery.data?.items || []).length && <div className="tip" style={{ marginTop: 12 }}>暂无登录记录</div>}
+                <div className="tip" style={{ marginTop: 12 }}>如发现异常登录，请及时修改密码</div>
+              </div>
+            </div>
+          )}
+        </main>
+      </div>
+    </div>
   );
 }
 
-type SecurityCenterProps = {
-  email: string;
-  emailVerified: boolean;
-  passwordUpdatedAt: string;
-  loginLogs: Array<{ id: number; ip: string; device: string; location: string; time: string }>;
-  onChangePassword: (values: { oldPassword: string; newPassword: string }) => Promise<void>;
-  onBindEmail: (values: { email: string; code: string }) => Promise<void>;
-  passwordLoading: boolean;
-  emailLoading: boolean;
+type ListCardAction<T> = {
+  label: string;
+  icon?: ReactNode;
+  pending?: boolean;
+  onClick: (item: T) => void | Promise<void>;
 };
 
-function SecurityCenter({
-  email,
-  emailVerified,
-  passwordUpdatedAt,
-  loginLogs,
-  onChangePassword,
-  onBindEmail,
-  passwordLoading,
-  emailLoading,
-}: SecurityCenterProps) {
-  const [passwordForm] = Form.useForm();
-  const [emailForm] = Form.useForm();
-
-  return (
-    <Space direction="vertical" size={18} style={{ width: '100%' }}>
-      <Row gutter={[16, 16]}>
-        <Col xs={24} lg={12}>
-          <Card className="security-card" title={<Space><SafetyOutlined /> 修改密码</Space>}>
-            <Typography.Paragraph type="secondary">上次修改：{passwordUpdatedAt}</Typography.Paragraph>
-            <Form
-              form={passwordForm}
-              layout="vertical"
-              onFinish={async ({ oldPassword, newPassword }) => {
-                await onChangePassword({ oldPassword, newPassword });
-                passwordForm.resetFields();
-              }}
-            >
-              <Form.Item name="oldPassword" label="当前密码" rules={[{ required: true, message: '请输入当前密码' }]}>
-                <Input.Password />
-              </Form.Item>
-              <Form.Item name="newPassword" label="新密码" rules={[{ required: true, message: '请输入新密码' }, { min: 8, message: '至少 8 位' }]}>
-                <Input.Password />
-              </Form.Item>
-              <Form.Item
-                name="confirmPassword"
-                label="确认新密码"
-                dependencies={['newPassword']}
-                rules={[
-                  { required: true, message: '请再次输入新密码' },
-                  ({ getFieldValue }) => ({
-                    validator(_, value) {
-                      return !value || getFieldValue('newPassword') === value ? Promise.resolve() : Promise.reject(new Error('两次密码不一致'));
-                    },
-                  }),
-                ]}
-              >
-                <Input.Password />
-              </Form.Item>
-              <Button type="primary" htmlType="submit" loading={passwordLoading}>更新密码</Button>
-            </Form>
-          </Card>
-        </Col>
-        <Col xs={24} lg={12}>
-          <Card className="security-card" title={<Space><MailOutlined /> 绑定邮箱</Space>}>
-            <Typography.Paragraph type="secondary">
-              当前邮箱：{email} <Tag color={emailVerified ? 'blue' : 'orange'}>{emailVerified ? '已验证' : '未验证'}</Tag>
-            </Typography.Paragraph>
-            <Form
-              form={emailForm}
-              layout="vertical"
-              onFinish={async (values) => {
-                await onBindEmail(values);
-                emailForm.resetFields(['code']);
-              }}
-            >
-              <Form.Item name="email" label="新邮箱" rules={[{ required: true, message: '请输入邮箱' }, { type: 'email', message: '邮箱格式不正确' }]}>
-                <Input placeholder="name@example.com" />
-              </Form.Item>
-              <Form.Item name="code" label="邮箱验证码" rules={[{ required: true, message: '请输入验证码' }]}>
-                <Space.Compact style={{ width: '100%' }}>
-                  <Input placeholder="6 位验证码" />
-                  <Button onClick={() => message.success('验证码已发送，mock 环境可输入任意数字')}>获取验证码</Button>
-                </Space.Compact>
-              </Form.Item>
-              <Button type="primary" htmlType="submit" loading={emailLoading}>绑定邮箱</Button>
-            </Form>
-          </Card>
-        </Col>
-      </Row>
-
-      <ProfileList
-        title="登录记录"
-        data={loginLogs}
-        render={(item) => `${item.device} - ${item.location}`}
-        meta={(item) => `${item.time} / IP ${item.ip}`}
-      />
-    </Space>
-  );
-}
-
-type ProfileListProps<T> = {
+function ListCard<T extends { id: number }>({
+  title,
+  items,
+  loading,
+  error,
+  getHref,
+  render,
+  meta,
+  action,
+}: {
   title: string;
-  icon?: ReactNode;
-  data: T[];
+  items: T[];
+  loading?: boolean;
+  error?: unknown;
+  getHref: (item: T) => string;
   render: (item: T) => ReactNode;
   meta: (item: T) => ReactNode;
-};
+  action?: ListCardAction<T>;
+}) {
+  const navigate = useNavigate();
 
-function ProfileList<T extends { id: number }>({ title, icon, data, render, meta }: ProfileListProps<T>) {
+  function openItem(item: T) {
+    navigate(getHref(item));
+  }
+
   return (
-    <div className="detail-hero">
-      <Typography.Title level={4} style={{ marginTop: 0 }}>
-        {icon} {title}
-      </Typography.Title>
-      <List
-        dataSource={data}
-        locale={{ emptyText: '暂无数据' }}
-        renderItem={(item) => (
-          <List.Item>
-            <List.Item.Meta title={render(item)} description={meta(item)} />
-          </List.Item>
-        )}
-      />
+    <div className="card">
+      <div className="card-title">{title}</div>
+      <div className="card-body">
+        {loading && <div className="tip" style={{ textAlign: 'center', padding: 20 }}>加载中...</div>}
+        {error ? <ApiError error={error} /> : null}
+        {items.map((item) => (
+          <div
+            className="list-item clickable"
+            key={item.id}
+            onClick={(event) => {
+              if ((event.target as HTMLElement).closest('button')) return;
+              openItem(item);
+            }}
+          >
+            <div className="list-main">
+              <div className="item-title">{render(item)}</div>
+              <div className="item-meta">{meta(item)}</div>
+            </div>
+            {action && (
+              <button
+                className="item-btn btn-delete list-action"
+                disabled={action.pending}
+                onMouseDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void action.onClick(item);
+                }}
+              >
+                {action.icon}
+                {action.label}
+              </button>
+            )}
+          </div>
+        ))}
+        {!loading && !error && !items.length && <div className="tip" style={{ textAlign: 'center', padding: 20 }}>暂无数据</div>}
+      </div>
+    </div>
+  );
+}
+
+function MemberCenter({ points, level, expNeeded, percent }: { points: number; level: string; expNeeded: number; percent: number }) {
+  return (
+    <div className="card">
+      <div className="card-title">会员中心</div>
+      <div className="card-body">
+        <div className="member-current-card">
+          <div className="member-hd"><div className="member-level-name">{level}</div><div className="member-points">当前积分：{points} 分</div></div>
+          <div className="member-progress-section">
+            <div className="progress-text"><span>距离升级：活跃会员</span><span>{points} / {expNeeded}</span></div>
+            <div className="progress-bar-bg"><div className="progress-bar-active" style={{ width: `${percent}%` }} /></div>
+            <div className="progress-tip">距离升级还差 {Math.max(0, expNeeded - points)} 积分</div>
+          </div>
+          <div className="member-stats"><div><span>可用积分</span><strong>{points}</strong></div><div><span>冻结积分</span><strong>0</strong></div></div>
+        </div>
+        <div className="member-section"><div className="member-section-title">我的当前权益</div><div className="member-benefits"><div>• 每日下载次数：10 次</div><div>• 单资源最大附件：5 个</div><div>• 单文件最大大小：100MB</div><div>• 悬赏积分上限：100 分</div><div>• 资源置顶资格：无</div></div></div>
+        <div className="member-section"><div className="member-section-title">会员等级规则</div><div className="member-level-table"><div className="member-level-item"><span>普通会员</span><span>0 ~ 99 积分</span></div><div className="member-level-item"><span>活跃会员</span><span>100 ~ 499 积分</span></div><div className="member-level-item"><span>优质会员</span><span>500 ~ 1999 积分</span></div><div className="member-level-item"><span>资深会员</span><span>≥2000 积分</span></div></div></div>
+        <div className="member-section"><div className="member-section-title">全等级权益对照表</div><div className="member-benefit-table"><div className="benefit-head"><div>权益项</div><div>普通会员</div><div>活跃会员</div><div>优质会员</div><div>资深会员</div></div><div className="benefit-row"><div>每日下载次数</div><div>10</div><div>20</div><div>50</div><div>100</div></div><div className="benefit-row"><div>单资源最大附件</div><div>5</div><div>8</div><div>10</div><div>15</div></div><div className="benefit-row"><div>单文件最大大小</div><div>100MB</div><div>100MB</div><div>100MB</div><div>200MB</div></div><div className="benefit-row"><div>资源置顶资格</div><div>无</div><div>无</div><div>有</div><div>有</div></div><div className="benefit-row"><div>悬赏积分上限</div><div>100</div><div>500</div><div>2000</div><div>10000</div></div></div></div>
+        <div className="member-rule-group"><div className="member-section-title">积分获取规则</div><div className="member-rule"><div>• 资源审核通过 + 积分</div><div>• 资源被他人下载 + 积分</div><div>• 资源被收藏 + 积分</div><div>• 评论被点赞 + 积分</div><div>• 求资源回答被采纳 + 奖励积分</div></div></div>
+        <div className="member-rule-group"><div className="member-section-title">积分扣减规则</div><div className="member-rule deduct"><div>• 资源违规下架 - 扣除积分</div><div>• 举报/版权投诉成立 - 扣除积分</div><div>• 评论违规删除 - 扣除积分</div><div>• 求资源违规关闭 - 扣除积分</div></div></div>
+      </div>
+    </div>
+  );
+}
+
+function MessageCenter({
+  messages,
+  loading,
+  error,
+  pending,
+  onRead,
+  onReadAll,
+}: {
+  messages: Array<{ id: number; title: string; content: string; unread: boolean; date: string }>;
+  loading?: boolean;
+  error?: unknown;
+  pending?: boolean;
+  onRead: (id: number) => Promise<unknown>;
+  onReadAll: () => Promise<unknown>;
+}) {
+  const [localMessages, setLocalMessages] = useState(messages);
+
+  useEffect(() => {
+    setLocalMessages(messages);
+  }, [messages]);
+
+  async function markAllRead() {
+    try {
+      await onReadAll();
+      setLocalMessages((prev) => prev.map((item) => ({ ...item, unread: false })));
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '接口调用失败');
+    }
+  }
+
+  async function markRead(id: number) {
+    try {
+      await onRead(id);
+      setLocalMessages((prev) => prev.map((messageItem) => (messageItem.id === id ? { ...messageItem, unread: false } : messageItem)));
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '接口调用失败');
+    }
+  }
+
+  return (
+    <div className="card">
+      <div className="card-title">消息中心</div>
+      <div className="card-body">
+        <div className="msg-all-read"><button onClick={markAllRead} disabled={pending || Boolean(error)}>全部标为已读</button></div>
+        {loading && <div className="tip" style={{ textAlign: 'center', padding: 20 }}>加载中...</div>}
+        {error ? <ApiError error={error} /> : null}
+        {localMessages.map((item) => (
+          <div className={`msg-item ${item.unread ? 'msg-unread' : ''}`} key={item.id} onClick={() => markRead(item.id)}>
+            <div className="msg-title">{item.title}</div>
+            <div className="msg-content">{item.content}</div>
+            <div className="msg-time">{item.date}</div>
+          </div>
+        ))}
+        {!loading && !error && !localMessages.length && <div className="tip" style={{ textAlign: 'center', padding: 20 }}>暂无消息</div>}
+      </div>
     </div>
   );
 }

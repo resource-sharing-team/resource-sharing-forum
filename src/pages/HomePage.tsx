@@ -1,137 +1,81 @@
-import { ArrowRightOutlined, SearchOutlined, UploadOutlined } from '@ant-design/icons';
-import { Button, Col, Empty, Input, Row, Space, Spin, Typography } from 'antd';
-import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useDemands, useResources } from '../api/hooks';
-import DemandCard from '../components/DemandCard';
+import { useAnnouncements, useCategories, useResources } from '../api/hooks';
+import { InlineApiError } from '../components/ApiState';
 import ResourceCard from '../components/ResourceCard';
-import { categories } from '../data/catalog';
 
 export default function HomePage() {
   const navigate = useNavigate();
-  const [keyword, setKeyword] = useState('');
-  const resourcesQuery = useResources({ page: 1, pageSize: 3, sort: 'latest' });
-  const demandsQuery = useDemands({ page: 1, pageSize: 3, sort: 'latest' });
-
-  const search = () => {
-    navigate(`/resources?keyword=${encodeURIComponent(keyword)}`);
-  };
+  const latestQuery = useResources({ page: 1, pageSize: 2, sort: 'latest' });
+  const hotQuery = useResources({ page: 1, pageSize: 2, sort: 'download' });
+  const categoriesQuery = useCategories();
+  const announcementsQuery = useAnnouncements({ page: 1, pageSize: 5 });
+  const latest = latestQuery.data?.items || [];
+  const hot = hotQuery.data?.items || [];
+  const recommended = (categoriesQuery.data || [])
+    .flatMap((parent) => parent.children.map((child) => ({ ...child, parentId: parent.id })))
+    .slice(0, 6);
+  const notices = announcementsQuery.data?.items || [];
 
   return (
-    <>
-      <section className="hero-panel">
-        <div className="hero-content">
-          <p className="section-kicker">RESOURCE EXCHANGE</p>
-          <h1 className="hero-title">把散落的资料，变成可检索、可反馈、可沉淀的共享库。</h1>
-          <p className="hero-copy">
-            用户端已经接入列表、详情、评论、发布、收藏、点赞和个人中心流程。当前使用 MSW mock API，后端上线后替换 `/api` 服务即可。
-          </p>
-          <div className="hero-tools">
-            <Input.Search
-              size="large"
-              allowClear
-              prefix={<SearchOutlined />}
-              placeholder="搜索资源标题、标签、发布者"
-              value={keyword}
-              onChange={(event) => setKeyword(event.target.value)}
-              onSearch={search}
-              style={{ maxWidth: 470 }}
-            />
-            <Button size="large" type="primary" icon={<UploadOutlined />} onClick={() => navigate('/publish-resource')}>
-              发布资源
-            </Button>
-            <Button size="large" onClick={() => navigate('/demands')}>
-              看求资源
-            </Button>
+    <div className="container">
+      <div className="wrap">
+        <div className="main">
+          <div className="card">
+            <div className="card-title">最新资源</div>
+            <div className="card-body">
+              {latest.map((resource) => (
+                <ResourceCard resource={resource} compact key={resource.id} />
+              ))}
+              {latestQuery.isError && <InlineApiError error={latestQuery.error} />}
+              {!latest.length && <div className="tip" style={{ textAlign: 'center', padding: 20 }}>暂无资源</div>}
+            </div>
           </div>
-        </div>
-        <div className="hero-ledger">
-          <div className="ledger-item">
-            <span className="ledger-value">{resourcesQuery.data?.total || 0}</span>
-            <span className="ledger-label">可用资源</span>
-          </div>
-          <div className="ledger-item">
-            <span className="ledger-value">{demandsQuery.data?.total || 0}</span>
-            <span className="ledger-label">求资源帖子</span>
-          </div>
-          <div className="ledger-item">
-            <span className="ledger-value">/api</span>
-            <span className="ledger-label">统一接口前缀</span>
-          </div>
-        </div>
-      </section>
 
-      <section>
-        <div className="section-head">
-          <div>
-            <p className="section-kicker">LATEST RESOURCES</p>
-            <h2 className="section-title">最新资源</h2>
+          <div className="card">
+            <div className="card-title">热门资源</div>
+            <div className="card-body">
+              {hot.map((resource) => (
+                <ResourceCard resource={resource} compact key={resource.id} />
+              ))}
+              {hotQuery.isError && <InlineApiError error={hotQuery.error} />}
+              {!hot.length && <div className="tip" style={{ textAlign: 'center', padding: 20 }}>暂无资源</div>}
+            </div>
           </div>
-          <Button icon={<ArrowRightOutlined />} onClick={() => navigate('/resources')}>
-            全部资源
-          </Button>
         </div>
-        <Spin spinning={resourcesQuery.isLoading}>
-          <Row gutter={[16, 16]}>
-            {resourcesQuery.data?.items.map((resource) => (
-              <Col xs={24} lg={8} key={resource.id}>
-                <ResourceCard resource={resource} compact />
-              </Col>
-            ))}
-          </Row>
-        </Spin>
-      </section>
 
-      <section style={{ marginTop: 28 }}>
-        <div className="section-head">
-          <div>
-            <p className="section-kicker">DEMAND BOARD</p>
-            <h2 className="section-title">正在寻找</h2>
+        <aside className="sidebar">
+          <div className="card">
+            <div className="card-title">推荐分类</div>
+            <div className="card-body">
+              <div className="category-list">
+                {categoriesQuery.isError && <InlineApiError error={categoriesQuery.error} />}
+                {recommended.map((category) => (
+                  <button className="category-item" key={category.id} onClick={() => navigate(`/resources?cate1=${category.parentId}&cate2=${category.id}`)}>
+                    <div className="category-name">{category.name}</div>
+                    <div className="category-desc">查看该分类资源</div>
+                  </button>
+                ))}
+                {!recommended.length && !categoriesQuery.isError && <div className="tip">暂无推荐分类</div>}
+              </div>
+            </div>
           </div>
-          <Button icon={<ArrowRightOutlined />} onClick={() => navigate('/demands')}>
-            全部求资源
-          </Button>
-        </div>
-        <Spin spinning={demandsQuery.isLoading}>
-          <Row gutter={[16, 16]}>
-            {demandsQuery.data?.items.map((demand) => (
-              <Col xs={24} lg={8} key={demand.id}>
-                <DemandCard demand={demand} compact />
-              </Col>
-            ))}
-          </Row>
-        </Spin>
-      </section>
 
-      <section style={{ marginTop: 28 }}>
-        <div className="section-head">
-          <div>
-            <p className="section-kicker">CATALOG</p>
-            <h2 className="section-title">资源分类</h2>
+          <div className="card">
+            <div className="card-title">平台公告</div>
+            <div className="card-body">
+              <div className="notice-list">
+                {announcementsQuery.isError && <InlineApiError error={announcementsQuery.error} />}
+                {notices.map((notice) => (
+                  <div className="notice-item" key={notice.id}>
+                    {notice.title}
+                  </div>
+                ))}
+                {!notices.length && !announcementsQuery.isError && <div className="tip">暂无公告</div>}
+              </div>
+            </div>
           </div>
-        </div>
-        <Row gutter={[12, 12]}>
-          {categories.length ? (
-            categories.map((category) => (
-              <Col xs={24} sm={12} lg={8} key={category.id}>
-                <button
-                  type="button"
-                  className="ledger-item"
-                  style={{ width: '100%', textAlign: 'left', cursor: 'pointer' }}
-                  onClick={() => navigate(`/resources?cate1=${category.id}`)}
-                >
-                  <Typography.Title level={4} style={{ margin: 0 }}>{category.name}</Typography.Title>
-                  <Space wrap className="muted" style={{ marginTop: 8 }}>
-                    {category.children.map((child) => child.name).join(' / ')}
-                  </Space>
-                </button>
-              </Col>
-            ))
-          ) : (
-            <Empty />
-          )}
-        </Row>
-      </section>
-    </>
+        </aside>
+      </div>
+    </div>
   );
 }

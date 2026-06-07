@@ -1,90 +1,141 @@
-import { SendOutlined } from '@ant-design/icons';
-import { Button, Col, Form, Input, InputNumber, Row, Select, message } from 'antd';
+import { message } from 'antd';
+import { type FormEvent, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { usePublishDemand } from '../api/hooks';
-import { categories } from '../data/catalog';
+import { useCategories, usePublishDemand } from '../api/hooks';
+import { InlineApiError } from '../components/ApiState';
 import { demandPublishSchema } from '../utils/validation';
 
 export default function PublishDemandPage() {
-  const [form] = Form.useForm();
   const navigate = useNavigate();
   const publish = usePublishDemand();
-  const category1 = Form.useWatch('category1', form);
-  const selectedCategory = categories.find((item) => item.id === category1);
+  const categoriesQuery = useCategories();
+  const [rewardType, setRewardType] = useState<'free' | 'point'>('free');
+  const [values, setValues] = useState({
+    title: '',
+    category1: '',
+    category2: '',
+    tags: '',
+    description: '',
+    format: '',
+    points: '0',
+  });
+  const categories = categoriesQuery.data || [];
+  const selectedCategory = categories.find((item) => item.id === values.category1);
+  const tags = values.tags.split(/[,，\s]+/).filter(Boolean).slice(0, 5);
+
+  const update = (key: keyof typeof values, value: string) => setValues((prev) => ({ ...prev, [key]: value }));
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    const payload = {
+      ...values,
+      points: rewardType === 'point' ? Number(values.points || 0) : 0,
+      tags,
+    };
+    const parsed = demandPublishSchema.safeParse(payload);
+    if (!parsed.success) {
+      message.error(parsed.error.issues[0]?.message || '表单校验失败');
+      return;
+    }
+    try {
+      const demand = await publish.mutateAsync(parsed.data);
+      message.success('求资源已发布');
+      navigate(`/demands/${demand.id}`);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '接口调用失败');
+    }
+  }
 
   return (
-    <>
-      <div className="section-head">
-        <div>
-          <p className="section-kicker">REQUEST</p>
-          <h1 className="section-title">发布求资源</h1>
+    <div className="container narrow">
+      <div className="card">
+        <div className="card-title">发布求资源</div>
+        <div className="card-body">
+          {categoriesQuery.isError && <InlineApiError error={categoriesQuery.error} />}
+          <form onSubmit={submit}>
+            <div className="form-item">
+              <div className="form-label">求资源标题</div>
+              <input className="form-input" value={values.title} onChange={(event) => update('title', event.target.value)} placeholder="5-80字，清晰描述你需要的资源" />
+              <div className="tip">例：求2026教资面试真题、求Python实战项目源码</div>
+            </div>
+
+            <div className="category-row">
+              <div className="form-item">
+                <div className="form-label">一级分类</div>
+                <select className="form-input" value={values.category1} onChange={(event) => setValues((prev) => ({ ...prev, category1: event.target.value, category2: '' }))}>
+                  <option value="">请选择一级分类</option>
+                  {categories.map((category) => (
+                    <option value={category.id} key={category.id}>
+                      {category.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-item">
+                <div className="form-label">二级分类</div>
+                <select className="form-input" value={values.category2} onChange={(event) => update('category2', event.target.value)}>
+                  <option value="">请先选择一级分类</option>
+                  {selectedCategory?.children.map((category) => (
+                    <option value={category.id} key={category.id}>
+                      {category.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="form-item">
+              <div className="form-label">资源标签（1-5个，空格或逗号分隔）</div>
+              <input className="tag-input" value={values.tags} onChange={(event) => update('tags', event.target.value)} placeholder="输入标签，最多5个" />
+              <div className="tag-area">
+                {tags.map((tag) => (
+                  <span className="tag-item" key={tag}>
+                    {tag} ×
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div className="form-item">
+              <div className="form-label">需求说明</div>
+              <textarea className="form-textarea" value={values.description} onChange={(event) => update('description', event.target.value)} placeholder="20-500字，详细说明你需要的资源内容、用途、版本要求等" />
+            </div>
+
+            <div className="form-item">
+              <div className="form-label">期望格式</div>
+              <input className="form-input" value={values.format} onChange={(event) => update('format', event.target.value)} placeholder="例：PDF、Word、PPT、源码、MP4、图片等" />
+            </div>
+
+            <div className="form-item">
+              <div className="form-label">悬赏设置</div>
+              <div className="publish-type">
+                <label className="radio-item">
+                  <input type="radio" name="publishType" value="free" checked={rewardType === 'free'} onChange={() => setRewardType('free')} />
+                  <span>免费求资源</span>
+                </label>
+                <label className="radio-item">
+                  <input type="radio" name="publishType" value="point" checked={rewardType === 'point'} onChange={() => setRewardType('point')} />
+                  <span>积分悬赏</span>
+                </label>
+              </div>
+              {rewardType === 'point' && (
+                <input className="form-input" value={values.points} onChange={(event) => update('points', event.target.value)} placeholder="请输入悬赏积分（0~可用积分1000）" />
+              )}
+              <div className="tip">积分悬赏将冻结对应积分，采纳后发放给回答者</div>
+            </div>
+
+            <div className="btn-bar">
+              <button className="btn-cancel" type="button" onClick={() => navigate(-1)}>
+                取消
+              </button>
+              <button className="btn-submit" type="submit" disabled={publish.isPending}>
+                发布求资源
+              </button>
+            </div>
+            <div className="tip" style={{ textAlign: 'center', marginTop: 12 }}>发布后可在个人中心查看，未采纳前可取消</div>
+          </form>
         </div>
       </div>
-      <div className="detail-hero">
-        <Form
-          form={form}
-          layout="vertical"
-          initialValues={{ points: 0, tags: [] }}
-          onFinish={async (values) => {
-            const parsed = demandPublishSchema.safeParse(values);
-            if (!parsed.success) {
-              message.error(parsed.error.issues[0]?.message || '表单校验失败');
-              return;
-            }
-            const demand = await publish.mutateAsync(parsed.data);
-            message.success('求资源已发布');
-            navigate(`/demands/${demand.id}`);
-          }}
-        >
-          <Form.Item name="title" label="求资源标题" rules={[{ required: true, message: '请输入标题' }]}>
-            <Input placeholder="5-80 字，清楚描述你需要的资源" />
-          </Form.Item>
-          <Row gutter={12}>
-            <Col xs={24} md={12}>
-              <Form.Item name="category1" label="一级分类" rules={[{ required: true, message: '请选择一级分类' }]}>
-                <Select
-                  placeholder="请选择"
-                  options={categories.map((item) => ({ value: item.id, label: item.name }))}
-                  onChange={() => form.setFieldValue('category2', undefined)}
-                />
-              </Form.Item>
-            </Col>
-            <Col xs={24} md={12}>
-              <Form.Item name="category2" label="二级分类" rules={[{ required: true, message: '请选择二级分类' }]}>
-                <Select
-                  disabled={!selectedCategory}
-                  placeholder="请先选择一级分类"
-                  options={selectedCategory?.children.map((item) => ({ value: item.id, label: item.name })) || []}
-                />
-              </Form.Item>
-            </Col>
-          </Row>
-          <Row gutter={12}>
-            <Col xs={24} md={12}>
-              <Form.Item name="format" label="期望格式" rules={[{ required: true, message: '请填写期望格式' }]}>
-                <Input placeholder="例如 PDF、源码、视频、Figma" />
-              </Form.Item>
-            </Col>
-            <Col xs={24} md={12}>
-              <Form.Item name="points" label="悬赏积分">
-                <InputNumber min={0} max={1000} style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-          </Row>
-          <Form.Item name="tags" label="需求标签" rules={[{ required: true, message: '请添加标签' }]}>
-            <Select mode="tags" maxCount={5} placeholder="输入标签后回车，最多 5 个" />
-          </Form.Item>
-          <Form.Item name="description" label="需求说明" rules={[{ required: true, message: '请输入需求说明' }]}>
-            <Input.TextArea rows={7} placeholder="20-500 字，说明用途、版本要求、格式、是否接受替代资源" />
-          </Form.Item>
-          <Button type="primary" htmlType="submit" icon={<SendOutlined />} loading={publish.isPending}>
-            发布需求
-          </Button>
-          <Button style={{ marginLeft: 10 }} onClick={() => navigate(-1)}>
-            取消
-          </Button>
-        </Form>
-      </div>
-    </>
+    </div>
   );
 }

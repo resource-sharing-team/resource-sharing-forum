@@ -1,34 +1,29 @@
-import { CheckCircleOutlined, MessageOutlined, TrophyOutlined } from '@ant-design/icons';
-import { Card, Space, Tag, Typography } from 'antd';
 import { Link } from 'react-router-dom';
-import { getCategoryName } from '../data/catalog';
 import type { Demand } from '../types';
+import { formatCategory } from '../utils/format';
 
-export default function DemandCard({ demand, compact }: { demand: Demand; compact?: boolean }) {
+export default function DemandCard({ demand }: { demand: Demand; compact?: boolean }) {
   const solved = demand.status === 'solved';
 
   return (
-    <Card
-      className="demand-card"
-      title={<Link className="card-title-link" to={`/demands/${demand.id}`}>{demand.title}</Link>}
-      extra={<Tag color={solved ? 'blue' : 'orange'} icon={solved ? <CheckCircleOutlined /> : <TrophyOutlined />}>{solved ? '已解决' : `${demand.points} 积分`}</Tag>}
-    >
-      <Typography.Paragraph className="card-desc" ellipsis={{ rows: compact ? 2 : 3 }}>
-        {demand.description}
-      </Typography.Paragraph>
-      <div className="tag-row">
+    <div className="demand-card">
+      <Link className="demand-title" to={`/demands/${demand.id}`}>
+        {demand.title}
+      </Link>
+      <div className="demand-desc">{demand.description}</div>
+      <div className="demand-meta">
+        <span>{formatCategory(demand.category1, demand.category2)}</span>
+        <span className="demand-points">悬赏：{demand.points ? `${demand.points}积分` : '0（免费）'}</span>
+        <span>回复：{demand.replyCount}</span>
+        <span>发布者：{demand.author}</span>
+        <span>{demand.date}</span>
+        <span className={`demand-status ${solved ? 'solved' : ''}`}>{solved ? '已解决' : '进行中'}</span>
         {demand.tags.map((tag) => (
-          <Tag key={tag}>{tag}</Tag>
+          <span className="demand-tag" key={tag}>
+            {tag}
+          </span>
         ))}
       </div>
-      <Space wrap size="middle" style={{ marginTop: 14 }}>
-        <Typography.Text type="secondary">{getCategoryName(demand.category1, demand.category2)}</Typography.Text>
-        <Typography.Text type="secondary">期望：{demand.format}</Typography.Text>
-        <Typography.Text type="secondary" aria-label="回答数">
-          <MessageOutlined /> {demand.replyCount}
-        </Typography.Text>
-        <Typography.Text type="secondary">{demand.date}</Typography.Text>
-      </Space>
-    </Card>
+    </div>
   );
 }

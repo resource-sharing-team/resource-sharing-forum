@@ -4,6 +4,11 @@ export type Category = {
   children: Array<{ id: string; name: string }>;
 };
 
+export type ResourceTypeOption = {
+  value: string;
+  label: string;
+};
+
 export type User = {
   id: number;
   username: string;
@@ -73,10 +78,40 @@ export type Comment = {
   date: string;
   mine?: boolean;
   accepted?: boolean;
+  replyToAuthor?: string;
   replies?: Comment[];
 };
 
 export type ReportTarget = 'RESOURCE' | 'DEMAND' | 'COMMENT' | 'COPYRIGHT';
+
+export type Announcement = {
+  id: number;
+  title: string;
+  content: string;
+  date: string;
+};
+
+export type NotificationMessage = {
+  id: number;
+  title: string;
+  content: string;
+  unread: boolean;
+  date: string;
+};
+
+export type LoginLog = {
+  id: number;
+  ip: string;
+  device: string;
+  location: string;
+  time: string;
+};
+
+export type DownloadInfo = {
+  recordId: number;
+  fileName: string;
+  downloadUrl: string;
+};
 
 export type ListParams = {
   keyword?: string;
@@ -101,6 +136,6 @@ export type ProfileSummary = {
   demands: Demand[];
   favorites: Resource[];
   likes: Resource[];
-  messages: Array<{ id: number; title: string; content: string; unread: boolean; date: string }>;
-  loginLogs: Array<{ id: number; ip: string; device: string; location: string; time: string }>;
+  messages: NotificationMessage[];
+  loginLogs: LoginLog[];
 };

@@ -1,23 +1,19 @@
-import { LockOutlined, MailOutlined, UserOutlined } from '@ant-design/icons';
-import { Button, Form, Input, Space, Typography, message } from 'antd';
+import { message } from 'antd';
 import { useMutation } from '@tanstack/react-query';
+import { type FormEvent, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { login, register, resetPassword } from '../api/endpoints';
+import { login, register, resetPassword, sendResetPasswordCode } from '../api/endpoints';
 import { useAuthStore } from '../store/auth';
 
 type AuthMode = 'login' | 'register' | 'forgot';
 
-const copy: Record<AuthMode, { title: string; subtitle: string; action: string }> = {
-  login: { title: '欢迎回来', subtitle: '登录后可以发布、收藏、评论和管理个人资料。', action: '登录' },
-  register: { title: '创建账号', subtitle: '用一个账号沉淀你的资源贡献和求资源记录。', action: '注册' },
-  forgot: { title: '重置密码', subtitle: '通过邮箱验证码完成密码重置。', action: '重置密码' },
-};
-
 export default function AuthPage({ mode }: { mode: AuthMode }) {
   const navigate = useNavigate();
   const { setSession } = useAuthStore();
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const mutation = useMutation({
-    mutationFn: async (values: Record<string, string>) => {
+    mutationFn: async () => {
       if (mode === 'login') return login({ account: values.account, password: values.password });
       if (mode === 'register') return register({ username: values.username, email: values.email, password: values.password });
       await resetPassword({ email: values.email, code: values.code, password: values.password });
@@ -26,85 +22,135 @@ export default function AuthPage({ mode }: { mode: AuthMode }) {
     onSuccess: (result) => {
       if (result) {
         setSession(result.token, result.user);
-        message.success(`${copy[mode].action}成功`);
+        message.success(mode === 'login' ? '登录成功' : '注册成功');
         navigate('/');
       } else {
         message.success('密码已重置，请重新登录');
         navigate('/login');
       }
     },
+    onError: (error) => message.error(error instanceof Error ? error.message : '接口调用失败'),
   });
+  const codeMutation = useMutation({
+    mutationFn: () => sendResetPasswordCode({ email: values.email }),
+    onSuccess: (result) => {
+      message.success(result.devCode ? `校验码：${result.devCode}` : '校验码已发送');
+    },
+    onError: (error) => message.error(error instanceof Error ? error.message : '接口调用失败'),
+  });
+
+  const update = (key: string, value: string) => setValues((prev) => ({ ...prev, [key]: value }));
+
+  function validate() {
+    const next: Record<string, string> = {};
+    if (mode === 'login') {
+      if (!values.account) next.account = '请输入用户名或邮箱';
+      if (!values.password) next.password = '请输入密码';
+    }
+    if (mode === 'register') {
+      if (!values.username || values.username.length < 2) next.username = '用户名长度需为2-20个字符';
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(values.email || '')) next.email = '邮箱格式不正确';
+      if (!values.password || values.password.length < 8) next.password = '密码长度需为8-16位';
+      if (values.password !== values.confirm) next.confirm = '两次输入的密码不一致';
+    }
+    if (mode === 'forgot') {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(values.email || '')) next.email = '邮箱格式不正确';
+      if (!/^\d{6}$/.test(values.code || '')) next.code = '验证码必须为6位数字';
+      if (!values.password || values.password.length < 8) next.password = '密码长度需为8-16位';
+      if (values.password !== values.confirm) next.confirm = '两次输入的密码不一致';
+    }
+    setErrors(next);
+    return !Object.keys(next).length;
+  }
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    if (validate()) mutation.mutate();
+  }
+
+  function sendCode() {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(values.email || '')) {
+      setErrors((prev) => ({ ...prev, email: '邮箱格式不正确' }));
+      return;
+    }
+    codeMutation.mutate();
+  }
+
+  const wrapper = mode === 'login' ? 'login-wrap' : mode === 'register' ? 'reg-wrap' : 'forgot-wrap';
+  const title = mode === 'login' ? '资源分享论坛' : mode === 'register' ? '用户注册' : '找回密码';
 
   return (
     <main className="auth-page">
-      <section className="auth-card">
-        <div className="auth-art">
-          <Typography.Title style={{ color: 'white', marginTop: 0 }}>资源分享论坛</Typography.Title>
-          <Typography.Paragraph style={{ color: 'rgba(255,255,255,0.82)', fontSize: 16, lineHeight: 1.8 }}>
-            用户端已迁移到 React/Vite 架构。这里的登录注册会请求 `/api/auth/*`，当前由 MSW mock 响应。
-          </Typography.Paragraph>
-          <Space direction="vertical" size={12} style={{ marginTop: 24 }}>
-            <span>统一会话状态：Zustand</span>
-            <span>统一接口请求：Axios</span>
-            <span>统一服务端缓存：TanStack Query</span>
-          </Space>
+      <div className={wrapper}>
+        <div className="auth-title">{title}</div>
+        <form onSubmit={submit}>
+          {mode === 'login' && (
+            <>
+              <AuthInput label="用户名/邮箱" value={values.account} error={errors.account} placeholder="请输入用户名或邮箱" onChange={(value) => update('account', value)} />
+              <AuthInput label="密码" type="password" value={values.password} error={errors.password} placeholder="请输入登录密码" onChange={(value) => update('password', value)} />
+            </>
+          )}
+
+          {mode === 'register' && (
+            <>
+              <AuthInput label="用户名" value={values.username} error={errors.username} placeholder="2-20个字符，支持中文、英文、数字和下划线" onChange={(value) => update('username', value)} />
+              <AuthInput label="邮箱" type="email" value={values.email} error={errors.email} placeholder="请输入注册邮箱" onChange={(value) => update('email', value)} />
+              <AuthInput label="设置密码" type="password" value={values.password} error={errors.password} placeholder="8-16位，需同时包含字母和数字" onChange={(value) => update('password', value)} />
+              <AuthInput label="确认密码" type="password" value={values.confirm} error={errors.confirm} placeholder="再次输入密码" onChange={(value) => update('confirm', value)} />
+            </>
+          )}
+
+          {mode === 'forgot' && (
+            <>
+              <AuthInput label="绑定邮箱" type="email" value={values.email} error={errors.email} placeholder="请输入注册时绑定的邮箱" onChange={(value) => update('email', value)} />
+              <CodeInput value={values.code} error={errors.code} onChange={(value) => update('code', value)} onSend={sendCode} pending={codeMutation.isPending} />
+              <AuthInput label="新密码" type="password" value={values.password} error={errors.password} placeholder="8-16位，需同时包含字母和数字" onChange={(value) => update('password', value)} />
+              <AuthInput label="确认新密码" type="password" value={values.confirm} error={errors.confirm} placeholder="再次输入新密码" onChange={(value) => update('confirm', value)} />
+            </>
+          )}
+
+          <button className="auth-submit" type="submit" disabled={mutation.isPending}>
+            {mode === 'login' ? '立即登录' : mode === 'register' ? '提交注册' : '重置密码'}
+          </button>
+        </form>
+
+        <div className="tip-link">
+          {mode === 'login' && (
+            <>
+              <Link to="/forgot-password">忘记密码？</Link>
+              &nbsp;&nbsp;|&nbsp;&nbsp;
+              <Link to="/register">前往注册</Link>
+            </>
+          )}
+          {mode === 'register' && <>已有账号？<Link to="/login">返回登录</Link></>}
+          {mode === 'forgot' && <>想起来了？<Link to="/login">返回登录</Link></>}
         </div>
-        <div className="auth-form">
-          <Typography.Title level={2} style={{ marginTop: 0 }}>{copy[mode].title}</Typography.Title>
-          <Typography.Paragraph type="secondary">{copy[mode].subtitle}</Typography.Paragraph>
-          <Form layout="vertical" onFinish={(values) => mutation.mutate(values)}>
-            {mode === 'login' && (
-              <Form.Item name="account" label="账号" rules={[{ required: true, message: '请输入用户名或邮箱' }]}>
-                <Input prefix={<UserOutlined />} placeholder="用户名或邮箱" />
-              </Form.Item>
-            )}
-            {mode === 'register' && (
-              <Form.Item name="username" label="用户名" rules={[{ required: true, message: '请输入用户名' }, { min: 2, message: '至少 2 个字符' }]}>
-                <Input prefix={<UserOutlined />} placeholder="2-20 个字符" />
-              </Form.Item>
-            )}
-            {(mode === 'register' || mode === 'forgot') && (
-              <Form.Item name="email" label="邮箱" rules={[{ required: true, message: '请输入邮箱' }, { type: 'email', message: '邮箱格式不正确' }]}>
-                <Input prefix={<MailOutlined />} placeholder="name@example.com" />
-              </Form.Item>
-            )}
-            {mode === 'forgot' && (
-              <Form.Item name="code" label="邮箱验证码" rules={[{ required: true, message: '请输入验证码' }]}>
-                <Input placeholder="6 位数字验证码" />
-              </Form.Item>
-            )}
-            <Form.Item name="password" label={mode === 'forgot' ? '新密码' : '密码'} rules={[{ required: true, message: '请输入密码' }, { min: 8, message: '至少 8 位' }]}>
-              <Input.Password prefix={<LockOutlined />} placeholder="至少 8 位，建议包含字母和数字" />
-            </Form.Item>
-            {mode !== 'login' && (
-              <Form.Item
-                name="confirm"
-                label="确认密码"
-                dependencies={['password']}
-                rules={[
-                  { required: true, message: '请再次输入密码' },
-                  ({ getFieldValue }) => ({
-                    validator(_, value) {
-                      return !value || getFieldValue('password') === value ? Promise.resolve() : Promise.reject(new Error('两次密码不一致'));
-                    },
-                  }),
-                ]}
-              >
-                <Input.Password prefix={<LockOutlined />} placeholder="再次输入密码" />
-              </Form.Item>
-            )}
-            <Button type="primary" block htmlType="submit" loading={mutation.isPending}>
-              {copy[mode].action}
-            </Button>
-          </Form>
-          <Space style={{ marginTop: 18 }}>
-            {mode !== 'login' && <Link to="/login">返回登录</Link>}
-            {mode !== 'register' && <Link to="/register">注册账号</Link>}
-            {mode !== 'forgot' && <Link to="/forgot-password">忘记密码</Link>}
-            <Link to="/">先看看资源</Link>
-          </Space>
-        </div>
-      </section>
+      </div>
     </main>
+  );
+}
+
+function AuthInput({ label, value = '', error, placeholder, type = 'text', onChange }: { label: string; value?: string; error?: string; placeholder: string; type?: string; onChange: (value: string) => void }) {
+  return (
+    <div className="form-item">
+      <label>{label}</label>
+      <input className="form-input" type={type} value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />
+      <div className="error-text">{error}</div>
+    </div>
+  );
+}
+
+function CodeInput({ value = '', error, pending, onChange, onSend }: { value?: string; error?: string; pending?: boolean; onChange: (value: string) => void; onSend: () => void }) {
+  return (
+    <div className="form-item">
+      <label>邮箱验证码</label>
+      <div className="input-row">
+        <input className="form-input" value={value} placeholder="请输入6位数字验证码" onChange={(event) => onChange(event.target.value)} />
+        <button type="button" className="code-btn" onClick={onSend} disabled={pending}>
+          获取验证码
+        </button>
+      </div>
+      <div className="error-text">{error}</div>
+    </div>
   );
 }
