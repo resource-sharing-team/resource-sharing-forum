@@ -41,6 +41,27 @@ textarea {
   font-size: 14px;
 }
 
+.top-account {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 14px;
+}
+
+.top-logout {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+}
+
+.top-logout::before {
+  content: "|";
+  margin-right: 8px;
+  opacity: 0.8;
+}
+
 .container {
   display: flex;
   min-height: calc(100vh - 60px);
@@ -217,13 +238,19 @@ td:nth-child(3) {
   background: #fff;
   margin: 0 3px;
   border-radius: 3px;
-  cursor: default;
+  cursor: pointer;
 }
 
 .page-btn.active {
   background: #2e7d32;
   color: #fff;
   border-color: #2e7d32;
+}
+
+.page-btn:disabled {
+  color: #aaa;
+  background: #f7f7f7;
+  cursor: not-allowed;
 }
 
 .toolbar {
@@ -339,6 +366,13 @@ td:nth-child(3) {
   gap: 10px;
   align-items: center;
   margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.search-label,
+.result-count {
+  color: #2e7d32;
+  font-size: 13px;
 }
 
 .search-select {
@@ -456,6 +490,12 @@ td:nth-child(3) {
   border-radius: 8px;
   background-color: #fefefa;
   color: #1f3e2d;
+}
+
+.login-error {
+  margin: -4px 0 12px;
+  color: #d32f2f;
+  font-size: 13px;
 }
 
 .btn-login {

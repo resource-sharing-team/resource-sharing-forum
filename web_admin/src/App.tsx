@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { BrowserRouter, Link, NavLink, Route, Routes, useLocation } from 'react-router-dom';
+import { type ReactNode, useEffect, useMemo, useState } from 'react';
+import { BrowserRouter, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import {
   categories,
   comments,
@@ -12,6 +12,9 @@ import {
   requestPosts,
   users,
 } from './data/mockAdmin';
+import type { AdminCategory, AdminComment, AdminComplaint, AdminLog, AdminReport, AdminRequestPost, AdminResource, AdminUser, MemberLevel } from './types';
+
+const SESSION_KEY = 'rsf_admin_session';
 
 const navItems = [
   { to: '/', label: '内容综合管理' },
@@ -30,18 +33,59 @@ type ModalState = null | {
   onConfirm?: (reason: string) => void;
 };
 
+type ConfigItem = {
+  label: string;
+  value: string;
+};
+
+function storedValue<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function useStoredState<T>(key: string, fallback: T) {
+  const [value, setValue] = useState<T>(() => storedValue(key, fallback));
+
+  useEffect(() => {
+    localStorage.setItem(key, JSON.stringify(value));
+  }, [key, value]);
+
+  return [value, setValue] as const;
+}
+
 export default function App() {
+  const [isLoggedIn, setIsLoggedIn] = useState(() => localStorage.getItem(SESSION_KEY) === 'active');
+
+  const handleLogin = () => {
+    localStorage.setItem(SESSION_KEY, 'active');
+    setIsLoggedIn(true);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem(SESSION_KEY);
+    setIsLoggedIn(false);
+  };
+
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/*" element={<AdminShell />} />
+        <Route path="/login" element={<LoginPage onLogin={handleLogin} />} />
+        <Route path="/*" element={isLoggedIn ? <AdminShell onLogout={handleLogout} /> : <Navigate to="/login" replace />} />
       </Routes>
     </BrowserRouter>
   );
 }
 
-function LoginPage() {
+function LoginPage({ onLogin }: { onLogin: () => void }) {
+  const navigate = useNavigate();
+  const [account, setAccount] = useState('admin');
+  const [password, setPassword] = useState('password');
+  const [error, setError] = useState('');
+
   return (
     <main className="login-page">
       <section className="login-card" aria-label="后台登录">
@@ -55,16 +99,29 @@ function LoginPage() {
         </div>
         <h1>资源分享论坛</h1>
         <div className="login-subtitle">后台管理系统</div>
-        <form className="login-form">
-          <label>
+        <form
+          className="login-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (account.trim() === 'admin' && password === 'password') {
+              setError('');
+              onLogin();
+              navigate('/', { replace: true });
+              return;
+            }
+            setError('账号或密码错误，演示账号为 admin / password');
+          }}
+        >
+          <label htmlFor="admin-account">
             管理员账号
-            <input type="email" value="admin" readOnly />
+            <input id="admin-account" type="text" value={account} onChange={(event) => setAccount(event.target.value)} />
           </label>
-          <label>
+          <label htmlFor="admin-password">
             登录密码
-            <input type="password" value="password" readOnly />
+            <input id="admin-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
           </label>
-          <button type="button" className="btn-login">
+          {error && <div className="login-error">{error}</div>}
+          <button type="submit" className="btn-login">
             登录后台
           </button>
         </form>
@@ -74,7 +131,8 @@ function LoginPage() {
   );
 }
 
-function AdminShell() {
+function AdminShell({ onLogout }: { onLogout: () => void }) {
+  const navigate = useNavigate();
   const [modal, setModal] = useState<ModalState>(null);
   const [notice, setNotice] = useState('');
   const openModal = (nextModal: ModalState) => {
@@ -86,7 +144,19 @@ function AdminShell() {
     <div className="admin-page">
       <header className="top">
         <h3>管理员管理系统</h3>
-        <span>管理员账号 | 退出系统</span>
+        <div className="top-account">
+          <span>管理员账号</span>
+          <button
+            type="button"
+            className="top-logout"
+            onClick={() => {
+              onLogout();
+              navigate('/login', { replace: true });
+            }}
+          >
+            退出系统
+          </button>
+        </div>
       </header>
       <div className="container">
         <aside className="left" aria-label="后台导航">
@@ -95,7 +165,6 @@ function AdminShell() {
               {item.label}
             </NavLink>
           ))}
-          <Link to="/login">返回登录页</Link>
         </aside>
         <main className="main">
           {notice && <div className="notice">{notice}</div>}
@@ -104,7 +173,7 @@ function AdminShell() {
             <Route path="/users" element={<UsersPage openModal={openModal} setNotice={setNotice} />} />
             <Route path="/reports" element={<ReportsPage openModal={openModal} setNotice={setNotice} />} />
             <Route path="/categories" element={<CategoriesPage openModal={openModal} setNotice={setNotice} />} />
-            <Route path="/config" element={<ConfigPage />} />
+            <Route path="/config" element={<ConfigPage setNotice={setNotice} />} />
             <Route path="/logs" element={<LogsPage />} />
             <Route path="*" element={<ContentPage openModal={openModal} setNotice={setNotice} />} />
           </Routes>
@@ -130,10 +199,10 @@ function ContentPage({
   setNotice: (message: string) => void;
 }) {
   const [activeTab, setActiveTab] = useState('audit');
-  const [auditRows, setAuditRows] = useState(() => pendingResources.map((item) => ({ ...item })));
-  const [resourceRows, setResourceRows] = useState(() => managedResources.map((item) => ({ ...item })));
-  const [requestRows, setRequestRows] = useState(() => requestPosts.map((item) => ({ ...item })));
-  const [commentRows, setCommentRows] = useState(() => comments.map((item) => ({ ...item })));
+  const [auditRows, setAuditRows] = useStoredState<AdminResource[]>('rsf_admin_audit_rows', pendingResources);
+  const [resourceRows, setResourceRows] = useStoredState<AdminResource[]>('rsf_admin_resource_rows', managedResources);
+  const [requestRows, setRequestRows] = useStoredState<AdminRequestPost[]>('rsf_admin_request_rows', requestPosts);
+  const [commentRows, setCommentRows] = useStoredState<AdminComment[]>('rsf_admin_comment_rows', comments);
   const tabs = [
     { id: 'audit', label: '资源审核列表' },
     { id: 'status', label: '资源上下架管理' },
@@ -200,7 +269,7 @@ function ContentPage({
                 ))}
               </tbody>
             </table>
-            <Pagination />
+            <Pagination ariaLabel="资源审核列表分页" total={auditRows.length} />
             <p className="tip">驳回操作需填写原因，审核通过后前台正常展示</p>
           </Panel>
         )}
@@ -251,7 +320,7 @@ function ContentPage({
                 ))}
               </tbody>
             </table>
-            <Pagination />
+            <Pagination ariaLabel="资源上下架管理分页" total={resourceRows.length} />
             <p className="tip">下架资源前台隐藏，版权下架资源禁止恢复</p>
           </Panel>
         )}
@@ -295,13 +364,15 @@ function ContentPage({
                           关闭帖子
                         </button>
                       )}
-                      <button className="btn off">管理回复</button>
+                      <button className="btn off" onClick={() => setNotice(`${item.id} 的管理回复入口已记录`)}>
+                        管理回复
+                      </button>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            <Pagination />
+            <Pagination ariaLabel="求资源帖子管理分页" total={requestRows.length} />
             <p className="tip">违规帖子可关闭，申诉通过后支持恢复</p>
           </Panel>
         )}
@@ -352,7 +423,7 @@ function ContentPage({
                 ))}
               </tbody>
             </table>
-            <Pagination />
+            <Pagination ariaLabel="评论内容管理分页" total={commentRows.length} />
             <p className="tip">删除评论前台隐藏，可按需恢复展示</p>
           </Panel>
         )}
@@ -368,7 +439,7 @@ function UsersPage({
   openModal: (modal: ModalState) => void;
   setNotice: (message: string) => void;
 }) {
-  const [userRows, setUserRows] = useState(() => users.map((item) => ({ ...item })));
+  const [userRows, setUserRows] = useStoredState<AdminUser[]>('rsf_admin_user_rows', users);
 
   return (
     <Panel title="用户账号管理">
@@ -422,7 +493,7 @@ function UsersPage({
           ))}
         </tbody>
       </table>
-      <Pagination />
+      <Pagination ariaLabel="用户账号管理分页" total={userRows.length} />
       <p className="tip">说明：禁用后用户无法登录，其已发布的资源前台不可见；恢复账号后，其资源需单独处理。</p>
     </Panel>
   );
@@ -436,8 +507,8 @@ function ReportsPage({
   setNotice: (message: string) => void;
 }) {
   const [activeTab, setActiveTab] = useState('report');
-  const [reportRows, setReportRows] = useState(() => reports.map((item) => ({ ...item })));
-  const [complaintRows, setComplaintRows] = useState(() => complaints.map((item) => ({ ...item })));
+  const [reportRows, setReportRows] = useStoredState<AdminReport[]>('rsf_admin_report_rows', reports);
+  const [complaintRows, setComplaintRows] = useStoredState<AdminComplaint[]>('rsf_admin_complaint_rows', complaints);
   const tabs = [
     { id: 'report', label: '举报处理' },
     { id: 'copyright', label: '版权投诉处理' },
@@ -504,7 +575,7 @@ function ReportsPage({
                 ))}
               </tbody>
             </table>
-            <Pagination />
+            <Pagination ariaLabel="举报处理分页" total={reportRows.length} />
             <p className="tip">驳回需填写原因；下架/删除操作会同步更新被举报对象状态，并记录处理结果。</p>
           </Panel>
         )}
@@ -566,7 +637,7 @@ function ReportsPage({
                 ))}
               </tbody>
             </table>
-            <Pagination />
+            <Pagination ariaLabel="版权投诉处理分页" total={complaintRows.length} />
             <p className="tip">版权投诉通过后，系统强制下架资源并锁定，资源不可恢复。</p>
           </Panel>
         )}
@@ -582,7 +653,7 @@ function CategoriesPage({
   openModal: (modal: ModalState) => void;
   setNotice: (message: string) => void;
 }) {
-  const [categoryRows, setCategoryRows] = useState(() => categories.map((item) => ({ ...item })));
+  const [categoryRows, setCategoryRows] = useStoredState<AdminCategory[]>('rsf_admin_category_rows', categories);
 
   return (
     <Panel title="分类标签管理">
@@ -616,6 +687,11 @@ function CategoriesPage({
                       placeholder: '请输入名称',
                       confirmText: '提交',
                       message: `${item.id} 分类/标签设置已保存`,
+                      onConfirm: (name) => {
+                        const nextName = name.trim();
+                        if (!nextName) return;
+                        setCategoryRows((rows) => rows.map((row) => (row.id === item.id ? { ...row, name: nextName } : row)));
+                      },
                     })
                   }
                 >
@@ -676,12 +752,29 @@ function CategoriesPage({
           新增分类/标签
         </button>
       </div>
+      <Pagination ariaLabel="分类标签管理分页" total={categoryRows.length} />
       <p className="tip">说明：禁用后不可用于新资源发布；删除前需校验关联资源数量，避免数据丢失。</p>
     </Panel>
   );
 }
 
-function ConfigPage() {
+function ConfigPage({ setNotice }: { setNotice: (message: string) => void }) {
+  const [levels, setLevels] = useStoredState<MemberLevel[]>('rsf_admin_member_levels', memberLevels);
+  const [scoreRules, setScoreRules] = useStoredState<ConfigItem[]>('rsf_admin_score_rules', [
+    { label: '资源审核通过 + 积分', value: '10' },
+    { label: '资源被下载 + 积分/次', value: '2' },
+    { label: '求资源回答被采纳 + 奖励积分', value: '5' },
+    { label: '资源违规下架 - 扣积分', value: '20' },
+    { label: '评论违规删除 - 扣积分', value: '5' },
+  ]);
+  const [systemParams, setSystemParams] = useStoredState<ConfigItem[]>('rsf_admin_system_params', [
+    { label: '允许上传文件类型', value: 'pdf,doc,docx,ppt,pptx,xls,xlsx,zip,rar,7z,png,jpg,jpeg,txt,md' },
+    { label: '用户每日最大发布资源数', value: '5' },
+    { label: '邮箱验证码有效期（分钟）', value: '10' },
+    { label: '连续登录失败锁定次数', value: '5' },
+    { label: '登录失败锁定时长（分钟）', value: '10' },
+  ]);
+
   return (
     <div className="config-page">
       <Panel title="会员等级配置">
@@ -698,70 +791,74 @@ function ConfigPage() {
             </tr>
           </thead>
           <tbody>
-            {memberLevels.map((level) => (
+            {levels.map((level, index) => (
               <tr key={level.name}>
                 <td>
-                  <input className="edit-name" defaultValue={level.name} />
+                  <input className="edit-name" value={level.name} onChange={(event) => updateLevel(setLevels, index, 'name', event.target.value)} />
                 </td>
                 <td>
-                  <input className="edit-input" defaultValue={level.min} />
+                  <input className="edit-input" value={level.min} onChange={(event) => updateLevel(setLevels, index, 'min', event.target.value)} />
                 </td>
                 <td>
-                  <input className="edit-input" defaultValue={level.max} />
+                  <input className="edit-input" value={level.max} onChange={(event) => updateLevel(setLevels, index, 'max', event.target.value)} />
                 </td>
                 <td>
-                  <input className="edit-input" defaultValue={level.downloads} />
+                  <input className="edit-input" value={level.downloads} onChange={(event) => updateLevel(setLevels, index, 'downloads', event.target.value)} />
                 </td>
                 <td>
-                  <input className="edit-input" defaultValue={level.files} />
+                  <input className="edit-input" value={level.files} onChange={(event) => updateLevel(setLevels, index, 'files', event.target.value)} />
                 </td>
                 <td>
-                  <input className="edit-input" defaultValue={level.rewardLimit} />
+                  <input className="edit-input" value={level.rewardLimit} onChange={(event) => updateLevel(setLevels, index, 'rewardLimit', event.target.value)} />
                 </td>
                 <td>
-                  <input className="edit-input" defaultValue={level.canTop} />
+                  <input className="edit-input" value={level.canTop} onChange={(event) => updateLevel(setLevels, index, 'canTop', event.target.value)} />
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
-        <button className="btn-save">保存会员配置</button>
+        <button className="btn-save" onClick={() => setNotice('会员配置已保存')}>
+          保存会员配置
+        </button>
       </Panel>
 
       <Panel title="积分规则配置">
-        <ConfigForm
-          items={[
-            ['资源审核通过 + 积分', '10'],
-            ['资源被下载 + 积分/次', '2'],
-            ['求资源回答被采纳 + 奖励积分', '5'],
-            ['资源违规下架 - 扣积分', '20'],
-            ['评论违规删除 - 扣积分', '5'],
-          ]}
-          buttonText="保存积分规则"
-        />
+        <ConfigForm items={scoreRules} onChange={setScoreRules} buttonText="保存积分规则" onSave={() => setNotice('积分规则已保存')} />
       </Panel>
 
-      <Panel title="系统参数配置">
-        <ConfigForm
-          items={[
-            ['允许上传文件类型', 'pdf,doc,docx,ppt,pptx,xls,xlsx,zip,rar,7z,png,jpg,jpeg,txt,md'],
-            ['用户每日最大发布资源数', '5'],
-            ['单文件大小上限（MB）', '100'],
-            ['连续登录失败锁定次数', '5'],
-            ['登录失败锁定时长（分钟）', '10'],
-          ]}
-          buttonText="保存系统参数"
-        />
+      <Panel title="全局系统参数">
+        <ConfigForm items={systemParams} onChange={setSystemParams} buttonText="保存系统参数" onSave={() => setNotice('系统参数已保存')} />
       </Panel>
     </div>
   );
 }
 
+function updateLevel(
+  setLevels: (updater: (levels: MemberLevel[]) => MemberLevel[]) => void,
+  index: number,
+  key: keyof MemberLevel,
+  value: string,
+) {
+  setLevels((levels) => levels.map((level, levelIndex) => (levelIndex === index ? { ...level, [key]: value } : level)));
+}
+
 function LogsPage() {
+  const [draftType, setDraftType] = useState('');
+  const [appliedType, setAppliedType] = useState('');
+  const [page, setPage] = useState(1);
+  const pageSize = 6;
+
+  const filteredLogs = useMemo(() => logs.filter((log) => matchesLogType(log, appliedType)), [appliedType]);
+  const visibleLogs = filteredLogs.slice((page - 1) * pageSize, page * pageSize);
+
   return (
     <Panel title="操作审计日志">
       <div className="search-row">
-        <select className="search-select" defaultValue="">
+        <label className="search-label" htmlFor="log-type">
+          操作类型
+        </label>
+        <select id="log-type" className="search-select" value={draftType} onChange={(event) => setDraftType(event.target.value)}>
           <option value="">全部操作类型</option>
           <option>账号登录</option>
           <option>资源审核</option>
@@ -770,8 +867,18 @@ function LogsPage() {
           <option>评论管理</option>
           <option>举报投诉处理</option>
           <option>分类标签维护</option>
+          <option>等级权益配置</option>
         </select>
-        <button className="btn-search">查询</button>
+        <button
+          className="btn-search"
+          onClick={() => {
+            setAppliedType(draftType);
+            setPage(1);
+          }}
+        >
+          查询
+        </button>
+        <span className="result-count">共 {filteredLogs.length} 条记录</span>
       </div>
       <table>
         <thead>
@@ -788,7 +895,7 @@ function LogsPage() {
           </tr>
         </thead>
         <tbody>
-          {logs.map((log) => (
+          {visibleLogs.map((log) => (
             <tr key={`${log.time}-${log.type}-${log.targetId}`}>
               <td>{log.time}</td>
               <td>{log.adminId}</td>
@@ -803,23 +910,51 @@ function LogsPage() {
           ))}
         </tbody>
       </table>
-      <Pagination />
+      <Pagination ariaLabel="操作审计日志分页" total={filteredLogs.length} page={page} pageSize={pageSize} onPageChange={setPage} />
     </Panel>
   );
 }
 
-function ConfigForm({ items, buttonText }: { items: Array<[string, string]>; buttonText: string }) {
+function matchesLogType(log: AdminLog, type: string) {
+  if (!type) return true;
+  if (type === '资源上下架') return log.type === '资源下架' || log.type === '资源恢复';
+  if (type === '用户状态变更') return log.type === '用户禁用' || log.type === '用户恢复';
+  if (type === '评论管理') return log.type === '评论删除' || log.type === '评论恢复';
+  if (type === '举报投诉处理') return log.type === '举报处理' || log.type === '版权投诉处理';
+  if (type === '分类标签维护') return log.type.startsWith('分类') || log.type.startsWith('标签');
+  return log.type === type;
+}
+
+function ConfigForm({
+  items,
+  onChange,
+  buttonText,
+  onSave,
+}: {
+  items: ConfigItem[];
+  onChange: (updater: (items: ConfigItem[]) => ConfigItem[]) => void;
+  buttonText: string;
+  onSave: () => void;
+}) {
   return (
     <>
       <div className="config-form">
-        {items.map(([label, value]) => (
-          <label className="form-item" key={label}>
-            <span className="form-label">{label}</span>
-            <input className="form-input" defaultValue={value} />
+        {items.map((item, index) => (
+          <label className="form-item" key={item.label}>
+            <span className="form-label">{item.label}</span>
+            <input
+              className="form-input"
+              value={item.value}
+              onChange={(event) =>
+                onChange((currentItems) => currentItems.map((currentItem, itemIndex) => (itemIndex === index ? { ...currentItem, value: event.target.value } : currentItem)))
+              }
+            />
           </label>
         ))}
       </div>
-      <button className="btn-save">{buttonText}</button>
+      <button className="btn-save" onClick={onSave}>
+        {buttonText}
+      </button>
     </>
   );
 }
@@ -844,7 +979,7 @@ function TabHead({
   );
 }
 
-function Panel({ title, children }: { title?: string; children: React.ReactNode }) {
+function Panel({ title, children }: { title?: string; children: ReactNode }) {
   return (
     <section className="panel">
       {title ? <div className="card-title">{title}</div> : null}
@@ -853,13 +988,37 @@ function Panel({ title, children }: { title?: string; children: React.ReactNode 
   );
 }
 
-function Pagination() {
+function Pagination({
+  ariaLabel,
+  total,
+  page = 1,
+  pageSize = 10,
+  onPageChange,
+}: {
+  ariaLabel: string;
+  total: number;
+  page?: number;
+  pageSize?: number;
+  onPageChange?: (page: number) => void;
+}) {
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const pages = Array.from({ length: pageCount }, (_, index) => index + 1);
+  const canPrev = page > 1;
+  const canNext = page < pageCount;
+
   return (
-    <div className="page-box">
-      <button className="page-btn">上一页</button>
-      <button className="page-btn active">1</button>
-      <button className="page-btn">2</button>
-      <button className="page-btn">下一页</button>
+    <div className="page-box" aria-label={ariaLabel}>
+      <button className="page-btn" disabled={!canPrev} onClick={() => canPrev && onPageChange?.(page - 1)}>
+        上一页
+      </button>
+      {pages.map((pageNumber) => (
+        <button key={pageNumber} className={pageNumber === page ? 'page-btn active' : 'page-btn'} onClick={() => onPageChange?.(pageNumber)}>
+          {pageNumber}
+        </button>
+      ))}
+      <button className="page-btn" disabled={!canNext} onClick={() => canNext && onPageChange?.(page + 1)}>
+        下一页
+      </button>
     </div>
   );
 }
