@@ -27,6 +27,7 @@ type ModalState = null | {
   placeholder: string;
   confirmText: string;
   message: string;
+  onConfirm?: (reason: string) => void;
 };
 
 export default function App() {
@@ -75,6 +76,11 @@ function LoginPage() {
 
 function AdminShell() {
   const [modal, setModal] = useState<ModalState>(null);
+  const [notice, setNotice] = useState('');
+  const openModal = (nextModal: ModalState) => {
+    setNotice('');
+    setModal(nextModal);
+  };
 
   return (
     <div className="admin-page">
@@ -92,24 +98,42 @@ function AdminShell() {
           <Link to="/login">返回登录页</Link>
         </aside>
         <main className="main">
+          {notice && <div className="notice">{notice}</div>}
           <Routes>
-            <Route path="/" element={<ContentPage openModal={setModal} />} />
-            <Route path="/users" element={<UsersPage openModal={setModal} />} />
-            <Route path="/reports" element={<ReportsPage openModal={setModal} />} />
-            <Route path="/categories" element={<CategoriesPage openModal={setModal} />} />
+            <Route path="/" element={<ContentPage openModal={openModal} setNotice={setNotice} />} />
+            <Route path="/users" element={<UsersPage openModal={openModal} setNotice={setNotice} />} />
+            <Route path="/reports" element={<ReportsPage openModal={openModal} setNotice={setNotice} />} />
+            <Route path="/categories" element={<CategoriesPage openModal={openModal} setNotice={setNotice} />} />
             <Route path="/config" element={<ConfigPage />} />
             <Route path="/logs" element={<LogsPage />} />
-            <Route path="*" element={<ContentPage openModal={setModal} />} />
+            <Route path="*" element={<ContentPage openModal={openModal} setNotice={setNotice} />} />
           </Routes>
         </main>
       </div>
-      <ReasonModal modal={modal} onClose={() => setModal(null)} />
+      <ReasonModal
+        modal={modal}
+        onClose={() => setModal(null)}
+        onConfirm={(message) => {
+          setNotice(message);
+          setModal(null);
+        }}
+      />
     </div>
   );
 }
 
-function ContentPage({ openModal }: { openModal: (modal: ModalState) => void }) {
+function ContentPage({
+  openModal,
+  setNotice,
+}: {
+  openModal: (modal: ModalState) => void;
+  setNotice: (message: string) => void;
+}) {
   const [activeTab, setActiveTab] = useState('audit');
+  const [auditRows, setAuditRows] = useState(() => pendingResources.map((item) => ({ ...item })));
+  const [resourceRows, setResourceRows] = useState(() => managedResources.map((item) => ({ ...item })));
+  const [requestRows, setRequestRows] = useState(() => requestPosts.map((item) => ({ ...item })));
+  const [commentRows, setCommentRows] = useState(() => comments.map((item) => ({ ...item })));
   const tabs = [
     { id: 'audit', label: '资源审核列表' },
     { id: 'status', label: '资源上下架管理' },
@@ -134,29 +158,43 @@ function ContentPage({ openModal }: { openModal: (modal: ModalState) => void }) 
                 </tr>
               </thead>
               <tbody>
-                {pendingResources.map((item) => (
+                {auditRows.map((item) => (
                   <tr key={item.id}>
                     <td>{item.id}</td>
                     <td>{item.title}</td>
                     <td>{item.user}</td>
                     <td>{item.status}</td>
                     <td>
-                      <button className="btn pass" onClick={() => window.alert('资源已通过审核')}>
-                        通过审核
-                      </button>
-                      <button
-                        className="btn reject"
-                        onClick={() =>
-                          openModal({
-                            title: '填写驳回原因',
-                            placeholder: '请输入驳回缘由',
-                            confirmText: '确认驳回',
-                            message: '驳回原因已记录，资源状态已更新',
-                          })
-                        }
-                      >
-                        驳回
-                      </button>
+                      {item.status === '待审核' ? (
+                        <>
+                          <button
+                            className="btn pass"
+                            onClick={() => {
+                              setAuditRows((rows) => rows.map((row) => (row.id === item.id ? { ...row, status: '已通过' } : row)));
+                              setNotice(`${item.id} 已通过审核`);
+                            }}
+                          >
+                            通过审核
+                          </button>
+                          <button
+                            className="btn reject"
+                            onClick={() =>
+                              openModal({
+                                title: '填写驳回原因',
+                                placeholder: '请输入驳回缘由',
+                                confirmText: '确认驳回',
+                                message: `${item.id} 已驳回，原因已记录`,
+                                onConfirm: () =>
+                                  setAuditRows((rows) => rows.map((row) => (row.id === item.id ? { ...row, status: '已驳回' } : row))),
+                              })
+                            }
+                          >
+                            驳回
+                          </button>
+                        </>
+                      ) : (
+                        <span className="muted">已处理</span>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -179,16 +217,34 @@ function ContentPage({ openModal }: { openModal: (modal: ModalState) => void }) 
                 </tr>
               </thead>
               <tbody>
-                {managedResources.map((item) => (
+                {resourceRows.map((item) => (
                   <tr key={item.id}>
                     <td>{item.id}</td>
                     <td>{item.title}</td>
                     <td>{item.status}</td>
                     <td>
                       {item.status === '已发布' ? (
-                        <button className="btn off">下架</button>
+                        <button
+                          className="btn off"
+                          onClick={() => {
+                            setResourceRows((rows) => rows.map((row) => (row.id === item.id ? { ...row, status: '已下架' } : row)));
+                            setNotice(`${item.id} 已下架`);
+                          }}
+                        >
+                          下架
+                        </button>
+                      ) : item.status === '已下架' ? (
+                        <button
+                          className="btn restore"
+                          onClick={() => {
+                            setResourceRows((rows) => rows.map((row) => (row.id === item.id ? { ...row, status: '已发布' } : row)));
+                            setNotice(`${item.id} 已恢复上架`);
+                          }}
+                        >
+                          恢复上架
+                        </button>
                       ) : (
-                        <button className="btn restore">恢复上架</button>
+                        <span className="muted">不可操作</span>
                       )}
                     </td>
                   </tr>
@@ -212,16 +268,32 @@ function ContentPage({ openModal }: { openModal: (modal: ModalState) => void }) 
                 </tr>
               </thead>
               <tbody>
-                {requestPosts.map((item) => (
+                {requestRows.map((item) => (
                   <tr key={item.id}>
                     <td>{item.id}</td>
                     <td>{item.title}</td>
                     <td>{item.status}</td>
                     <td>
                       {item.status === '已关闭' ? (
-                        <button className="btn restore">恢复帖子</button>
+                        <button
+                          className="btn restore"
+                          onClick={() => {
+                            setRequestRows((rows) => rows.map((row) => (row.id === item.id ? { ...row, status: '进行中' } : row)));
+                            setNotice(`${item.id} 已恢复`);
+                          }}
+                        >
+                          恢复帖子
+                        </button>
                       ) : (
-                        <button className="btn del">关闭帖子</button>
+                        <button
+                          className="btn del"
+                          onClick={() => {
+                            setRequestRows((rows) => rows.map((row) => (row.id === item.id ? { ...row, status: '已关闭' } : row)));
+                            setNotice(`${item.id} 已关闭`);
+                          }}
+                        >
+                          关闭帖子
+                        </button>
                       )}
                       <button className="btn off">管理回复</button>
                     </td>
@@ -247,7 +319,7 @@ function ContentPage({ openModal }: { openModal: (modal: ModalState) => void }) 
                 </tr>
               </thead>
               <tbody>
-                {comments.map((item) => (
+                {commentRows.map((item) => (
                   <tr key={item.id}>
                     <td>{item.id}</td>
                     <td>{item.content}</td>
@@ -255,9 +327,25 @@ function ContentPage({ openModal }: { openModal: (modal: ModalState) => void }) 
                     <td>{item.status}</td>
                     <td>
                       {item.status === '已删除' ? (
-                        <button className="btn restore">恢复评论</button>
+                        <button
+                          className="btn restore"
+                          onClick={() => {
+                            setCommentRows((rows) => rows.map((row) => (row.id === item.id ? { ...row, status: '正常' } : row)));
+                            setNotice(`${item.id} 已恢复`);
+                          }}
+                        >
+                          恢复评论
+                        </button>
                       ) : (
-                        <button className="btn del">删除评论</button>
+                        <button
+                          className="btn del"
+                          onClick={() => {
+                            setCommentRows((rows) => rows.map((row) => (row.id === item.id ? { ...row, status: '已删除' } : row)));
+                            setNotice(`${item.id} 已删除`);
+                          }}
+                        >
+                          删除评论
+                        </button>
                       )}
                     </td>
                   </tr>
@@ -265,7 +353,7 @@ function ContentPage({ openModal }: { openModal: (modal: ModalState) => void }) 
               </tbody>
             </table>
             <Pagination />
-            <p className="tip">删除违规评论会同步通知评论发布者，并记录操作日志</p>
+            <p className="tip">删除评论前台隐藏，可按需恢复展示</p>
           </Panel>
         )}
       </section>
@@ -273,7 +361,15 @@ function ContentPage({ openModal }: { openModal: (modal: ModalState) => void }) 
   );
 }
 
-function UsersPage({ openModal }: { openModal: (modal: ModalState) => void }) {
+function UsersPage({
+  openModal,
+  setNotice,
+}: {
+  openModal: (modal: ModalState) => void;
+  setNotice: (message: string) => void;
+}) {
+  const [userRows, setUserRows] = useState(() => users.map((item) => ({ ...item })));
+
   return (
     <Panel title="用户账号管理">
       <table>
@@ -287,7 +383,7 @@ function UsersPage({ openModal }: { openModal: (modal: ModalState) => void }) {
           </tr>
         </thead>
         <tbody>
-          {users.map((item) => (
+          {userRows.map((item) => (
             <tr key={item.id}>
               <td>{item.id}</td>
               <td>{item.nickname}</td>
@@ -295,7 +391,15 @@ function UsersPage({ openModal }: { openModal: (modal: ModalState) => void }) {
               <td>{item.status}</td>
               <td>
                 {item.status === '已禁用' ? (
-                  <button className="btn restore">恢复账号</button>
+                  <button
+                    className="btn restore"
+                    onClick={() => {
+                      setUserRows((rows) => rows.map((row) => (row.id === item.id ? { ...row, status: '正常' } : row)));
+                      setNotice(`${item.id} 已恢复账号`);
+                    }}
+                  >
+                    恢复账号
+                  </button>
                 ) : (
                   <button
                     className="btn forbid"
@@ -304,7 +408,9 @@ function UsersPage({ openModal }: { openModal: (modal: ModalState) => void }) {
                         title: '填写禁用原因',
                         placeholder: '请输入账号禁用缘由',
                         confirmText: '确认禁用',
-                        message: '账号已禁用，用户将无法登录',
+                        message: `${item.id} 已禁用，用户将无法登录`,
+                        onConfirm: () =>
+                          setUserRows((rows) => rows.map((row) => (row.id === item.id ? { ...row, status: '已禁用' } : row))),
                       })
                     }
                   >
@@ -322,8 +428,16 @@ function UsersPage({ openModal }: { openModal: (modal: ModalState) => void }) {
   );
 }
 
-function ReportsPage({ openModal }: { openModal: (modal: ModalState) => void }) {
+function ReportsPage({
+  openModal,
+  setNotice,
+}: {
+  openModal: (modal: ModalState) => void;
+  setNotice: (message: string) => void;
+}) {
   const [activeTab, setActiveTab] = useState('report');
+  const [reportRows, setReportRows] = useState(() => reports.map((item) => ({ ...item })));
+  const [complaintRows, setComplaintRows] = useState(() => complaints.map((item) => ({ ...item })));
   const tabs = [
     { id: 'report', label: '举报处理' },
     { id: 'copyright', label: '版权投诉处理' },
@@ -347,7 +461,7 @@ function ReportsPage({ openModal }: { openModal: (modal: ModalState) => void }) 
                 </tr>
               </thead>
               <tbody>
-                {reports.map((item) => (
+                {reportRows.map((item) => (
                   <tr key={item.id}>
                     <td>{item.id}</td>
                     <td>{item.targetId}</td>
@@ -355,22 +469,36 @@ function ReportsPage({ openModal }: { openModal: (modal: ModalState) => void }) 
                     <td>{item.type}</td>
                     <td>{item.status}</td>
                     <td>
-                      <button
-                        className="btn reject"
-                        onClick={() =>
-                          openModal({
-                            title: '填写处理结果',
-                            placeholder: '请输入处理意见与结果',
-                            confirmText: '提交',
-                            message: '处理结果已保存',
-                          })
-                        }
-                      >
-                        驳回
-                      </button>
-                      <button className={item.action === 'delete-comment' ? 'btn del' : 'btn off'}>
-                        {item.action === 'delete-comment' ? '删除评论' : item.action === 'offline-resource' ? '下架资源' : '下架帖子'}
-                      </button>
+                      {item.status === '待处理' ? (
+                        <>
+                          <button
+                            className="btn reject"
+                            onClick={() =>
+                              openModal({
+                                title: '填写处理结果',
+                                placeholder: '请输入处理意见与结果',
+                                confirmText: '提交',
+                                message: `${item.id} 已驳回并记录处理结果`,
+                                onConfirm: () =>
+                                  setReportRows((rows) => rows.map((row) => (row.id === item.id ? { ...row, status: '已驳回' } : row))),
+                              })
+                            }
+                          >
+                            驳回
+                          </button>
+                          <button
+                            className={item.action === 'delete-comment' ? 'btn del' : 'btn off'}
+                            onClick={() => {
+                              setReportRows((rows) => rows.map((row) => (row.id === item.id ? { ...row, status: '已处理' } : row)));
+                              setNotice(`${item.id} 已处理`);
+                            }}
+                          >
+                            {item.action === 'delete-comment' ? '删除评论' : item.action === 'offline-resource' ? '下架资源' : '下架帖子'}
+                          </button>
+                        </>
+                      ) : (
+                        <span className="muted">已处理</span>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -395,7 +523,7 @@ function ReportsPage({ openModal }: { openModal: (modal: ModalState) => void }) 
                 </tr>
               </thead>
               <tbody>
-                {complaints.map((item) => (
+                {complaintRows.map((item) => (
                   <tr key={item.id}>
                     <td>{item.id}</td>
                     <td>{item.resourceId}</td>
@@ -403,20 +531,36 @@ function ReportsPage({ openModal }: { openModal: (modal: ModalState) => void }) 
                     <td>{item.complainant}</td>
                     <td>{item.status}</td>
                     <td>
-                      <button
-                        className="btn reject"
-                        onClick={() =>
-                          openModal({
-                            title: '填写处理结果',
-                            placeholder: '请输入处理意见与结果',
-                            confirmText: '提交',
-                            message: '版权投诉处理结果已保存',
-                          })
-                        }
-                      >
-                        驳回投诉
-                      </button>
-                      <button className="btn off">通过并强制下架</button>
+                      {item.status === '待审核' ? (
+                        <>
+                          <button
+                            className="btn reject"
+                            onClick={() =>
+                              openModal({
+                                title: '填写处理结果',
+                                placeholder: '请输入处理意见与结果',
+                                confirmText: '提交',
+                                message: `${item.id} 已驳回投诉`,
+                                onConfirm: () =>
+                                  setComplaintRows((rows) => rows.map((row) => (row.id === item.id ? { ...row, status: '已驳回' } : row))),
+                              })
+                            }
+                          >
+                            驳回投诉
+                          </button>
+                          <button
+                            className="btn off"
+                            onClick={() => {
+                              setComplaintRows((rows) => rows.map((row) => (row.id === item.id ? { ...row, status: '已处理' } : row)));
+                              setNotice(`${item.id} 已通过并强制下架资源`);
+                            }}
+                          >
+                            通过并强制下架
+                          </button>
+                        </>
+                      ) : (
+                        <span className="muted">已处理</span>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -431,7 +575,15 @@ function ReportsPage({ openModal }: { openModal: (modal: ModalState) => void }) 
   );
 }
 
-function CategoriesPage({ openModal }: { openModal: (modal: ModalState) => void }) {
+function CategoriesPage({
+  openModal,
+  setNotice,
+}: {
+  openModal: (modal: ModalState) => void;
+  setNotice: (message: string) => void;
+}) {
+  const [categoryRows, setCategoryRows] = useState(() => categories.map((item) => ({ ...item })));
+
   return (
     <Panel title="分类标签管理">
       <table>
@@ -447,7 +599,7 @@ function CategoriesPage({ openModal }: { openModal: (modal: ModalState) => void 
           </tr>
         </thead>
         <tbody>
-          {categories.map((item) => (
+          {categoryRows.map((item) => (
             <tr key={item.id}>
               <td>{item.id}</td>
               <td>{item.name}</td>
@@ -463,16 +615,35 @@ function CategoriesPage({ openModal }: { openModal: (modal: ModalState) => void 
                       title: '分类/标签设置',
                       placeholder: '请输入名称',
                       confirmText: '提交',
-                      message: '分类/标签设置已保存',
+                      message: `${item.id} 分类/标签设置已保存`,
                     })
                   }
                 >
                   编辑
                 </button>
-                <button className={item.status === '启用' ? 'btn disable' : 'btn enable'}>
+                <button
+                  className={item.status === '启用' ? 'btn disable' : 'btn enable'}
+                  onClick={() => {
+                    const nextStatus = item.status === '启用' ? '禁用' : '启用';
+                    setCategoryRows((rows) => rows.map((row) => (row.id === item.id ? { ...row, status: nextStatus } : row)));
+                    setNotice(`${item.id} 已${nextStatus}`);
+                  }}
+                >
                   {item.status === '启用' ? '禁用' : '启用'}
                 </button>
-                <button className="btn del">删除</button>
+                <button
+                  className="btn del"
+                  onClick={() => {
+                    if (item.relationCount > 0) {
+                      setNotice(`${item.id} 存在关联资源，暂不可删除`);
+                      return;
+                    }
+                    setCategoryRows((rows) => rows.filter((row) => row.id !== item.id));
+                    setNotice(`${item.id} 已删除`);
+                  }}
+                >
+                  删除
+                </button>
               </td>
             </tr>
           ))}
@@ -487,6 +658,18 @@ function CategoriesPage({ openModal }: { openModal: (modal: ModalState) => void 
               placeholder: '请输入名称',
               confirmText: '提交',
               message: '新增分类/标签已保存',
+              onConfirm: (name) =>
+                setCategoryRows((rows) => [
+                  ...rows,
+                  {
+                    id: `T${String(rows.length + 1).padStart(3, '0')}`,
+                    name: name.trim() || '新建标签',
+                    type: '标签',
+                    parent: '-',
+                    relationCount: 0,
+                    status: '启用',
+                  },
+                ]),
             })
           }
         >
@@ -681,7 +864,15 @@ function Pagination() {
   );
 }
 
-function ReasonModal({ modal, onClose }: { modal: ModalState; onClose: () => void }) {
+function ReasonModal({
+  modal,
+  onClose,
+  onConfirm,
+}: {
+  modal: ModalState;
+  onClose: () => void;
+  onConfirm: (message: string) => void;
+}) {
   const [text, setText] = useState('');
   const location = useLocation();
 
@@ -703,8 +894,8 @@ function ReasonModal({ modal, onClose }: { modal: ModalState; onClose: () => voi
           <button
             className="modal-btn confirm"
             onClick={() => {
-              window.alert(modal.message);
-              onClose();
+              modal.onConfirm?.(text);
+              onConfirm(modal.message);
             }}
           >
             {modal.confirmText}

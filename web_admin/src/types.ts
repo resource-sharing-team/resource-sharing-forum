@@ -1,33 +1,33 @@
 export type AdminResource = {
-  id: number;
+  id: string;
   title: string;
   user?: string;
   status: string;
 };
 
 export type AdminRequestPost = {
-  id: number;
+  id: string;
   title: string;
   status: string;
 };
 
 export type AdminComment = {
-  id: number;
+  id: string;
   content: string;
   target: string;
   status: string;
 };
 
 export type AdminUser = {
-  id: number;
+  id: string;
   nickname: string;
   registeredAt: string;
   status: string;
 };
 
 export type AdminReport = {
-  id: number;
-  targetId: number;
+  id: string;
+  targetId: string;
   target: string;
   type: string;
   status: string;
@@ -35,15 +35,15 @@ export type AdminReport = {
 };
 
 export type AdminComplaint = {
-  id: number;
-  resourceId: number;
+  id: string;
+  resourceId: string;
   resourceName: string;
   complainant: string;
   status: string;
 };
 
 export type AdminCategory = {
-  id: number;
+  id: string;
   name: string;
   type: string;
   parent: string;
