@@ -1,6 +1,7 @@
 package com.resourcesharing.forum;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
@@ -39,6 +40,7 @@ class DesignSpecMySqlIntegrationTests {
     private final MockMvc mockMvc;
     private final JdbcTemplate jdbcTemplate;
 
+    @Autowired
     DesignSpecMySqlIntegrationTests(MockMvc mockMvc, JdbcTemplate jdbcTemplate) {
         this.mockMvc = mockMvc;
         this.jdbcTemplate = jdbcTemplate;
