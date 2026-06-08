@@ -1,0 +1,14 @@
+target/
+.git/
+.idea/
+.vscode/
+*.iml
+*.log
+logs/
+uploads/
+tmp/
+*.tmp
+.env
+.env.*
+Dockerfile
+docker-compose*.yml

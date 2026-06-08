@@ -1,0 +1,15 @@
+spring:
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+      - org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration
+  mail:
+    username: test@qq.com
+    password: test-authorization-code
+
+forum:
+  cors:
+    allowed-origins: http://localhost:5173,http://127.0.0.1:5173
+  mail:
+    from: test@qq.com
+    code-expires-minutes: 10

@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.env
+.env.local
+.env.*.local
+.vite/
+.cache/
+coverage/
+test-results/
+playwright-report/
+dev-server-run.log
+vite-dev.log
+vite-dev.err

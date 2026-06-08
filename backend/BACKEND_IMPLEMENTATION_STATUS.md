@@ -1,0 +1,289 @@
+# Backend Implementation Status
+
+## Current Branch
+
+- Branch: `refactor/design-spec-domain-foundation`
+- Phase: resource, file, request reward, admin system, audit, identity, interaction, notification legacy extraction and backend deployment hardening
+- API contract: unchanged
+- Controller contract: unchanged
+
+## Completed In This Phase
+
+- Added resource lifecycle state machine.
+- Added request reward lifecycle state machine.
+- Added reward point manager interface and JDBC implementation.
+- Integrated `DesignSpecForumService` with:
+  - `ResourceStateMachine` for resource submit, withdraw, and admin transitions.
+  - `RequestStateMachine` for request cancel, settle, and admin close.
+  - `PointManager` for request reward freeze, refund, and transfer.
+- Removed request reward point account mutations from `DesignSpecForumService`.
+- Added unit tests for state-machine rules.
+- Added MySQL integration tests for `PointManager`.
+- Converted `DesignSpecForumService` into a compatibility facade.
+- Moved the previous large implementation into `LegacyDesignSpecForumService` as a transition boundary.
+- Added support layer classes:
+  - `TxSupport`
+  - `ValueSupport`
+  - `ForumLookupService`
+  - `MappingSupport`
+- Added design-spec service packages for:
+  - identity
+  - resource and file
+  - interaction
+  - request reward
+  - report and appeal
+  - notification event and dispatcher
+  - admin logs, catalog, system config, and member status
+- Added structure regression test to keep the facade from depending directly on JDBC, transactions, state machines, or `PointManager`.
+- Migrated `ResourceQueryService` off `LegacyDesignSpecForumService`:
+  - front resource list
+  - resource detail
+  - admin resource list
+  - resource comments for detail response
+- Migrated `service.resource.ResourceService` off `LegacyDesignSpecForumService`:
+  - resource publish
+  - owner submit and withdraw
+  - owner/admin delete
+  - admin audit and status transitions
+  - resource tag and attachment metadata insertion
+- Migrated `service.resource.FileService` off `LegacyDesignSpecForumService` for resource attachment downloads.
+- Migrated `RequestRewardService` off `LegacyDesignSpecForumService`:
+  - request list and detail
+  - request creation and tag insertion
+  - owner cancel with reward refund through `PointManager`
+  - reply list and creation
+  - owner settle with reward transfer through `PointManager`
+  - admin close and admin reply deletion
+- Migrated `AdminLogService.adminLogs` and resource admin-log writes to the new admin log service.
+- Routed resource status notifications through `NotificationDispatcher`.
+- Migrated `AdminCatalogService` off `LegacyDesignSpecForumService`:
+  - category list, create, update, and disable
+  - tag list, create, disable, and merge
+  - all admin mutations write `admin_operation_log` through `AdminLogService`
+- Migrated `AdminSystemService` off `LegacyDesignSpecForumService`:
+  - system config query and update
+  - cache refresh admin-log write
+- Migrated `AdminMemberService` off `LegacyDesignSpecForumService`:
+  - member disable and enable
+  - ordinary member-only guard preserved
+  - admin-log write and member status notification dispatch
+- Migrated audit services off `LegacyDesignSpecForumService`:
+  - `ReportComplaintService.report`
+  - `ReportComplaintService.handleReport`
+  - `AppealService.appeal`
+  - `AppealService.handleAppeal`
+  - admin report/appeal handling writes `admin_operation_log` through `AdminLogService`
+- Migrated identity services off `LegacyDesignSpecForumService`:
+  - `AuthService.login`
+  - `AuthService.register`
+  - `AuthService.requestResetPasswordCode`
+  - `AuthService.resetPassword`
+  - `MemberService.userProfile`
+  - `MemberService.updateUserProfile`
+  - `MemberService.changePassword`
+  - `MemberService.changeEmail`
+  - login failure count, temporary lock, login record, JWT response, password hashing, member profile, point account, and initial point flow behavior are preserved
+- Migrated `InteractionService` off `LegacyDesignSpecForumService`:
+  - resource favorite and like idempotent toggle
+  - resource rating after successful download and one rating per member/resource
+  - comment list, create, reply, detail, update, delete, and like
+  - comment count updates for resource and request posts
+  - comment notifications routed through `NotificationDispatcher`
+- Normalized notification event boundaries:
+  - added `service.notification.NotificationService` for user notification queries and notice creation
+  - converted root `service.NotificationService` into a controller-compatible facade
+  - expanded `NotificationEventService` with pending, sent, and failed event state updates
+  - routed `NotificationDispatcher` through `notification_event` before creating `system_notice`
+  - kept `system_notice.event_id` linked to the same notification event and marks that event `FAILED` when notice creation fails
+  - report and appeal handling now dispatch result notifications
+- Isolated `NotificationDispatcher` with `TxSupport.requiresNew` so notification creation or failure-event recording does not roll back core business transactions.
+- Fixed `ValueSupport.splitTags` to use a stable comma/full-width comma splitter.
+- Expanded structure tests so migrated identity, resource, file, interaction, request reward, notification, catalog, system config, member-status, and audit services cannot depend on `LegacyDesignSpecForumService`.
+- Added notification dispatcher regression tests for `PENDING -> SENT`, notice-creation failure to `FAILED`, and pending-event creation failure fallback recording.
+- Added backend production deployment artifacts:
+  - `application-prod.yml` for environment-driven MySQL, Flyway, JWT, upload, and logging settings
+  - `ProductionDeploymentConfig` prod-profile guard that rejects unsafe JWT secrets, weak database passwords, and invalid CORS origins
+  - backend `Dockerfile` with Maven/JDK 17 build stage and JDK 17 runtime stage
+  - backend `.dockerignore`
+  - Docker Compose backend service with MySQL health dependency, app database user, upload volume, and required secret environment variables
+  - explicit environment-driven CORS allowlist for frontend integration
+  - structured console logging with `traceId`, optional `userId`, timestamp, level, class, and message fields
+  - production Hikari defaults aligned with the detailed design recommendation of minimum 10 and maximum 50 connections
+  - configurable in-memory rate limiting for sensitive auth endpoints
+  - API security headers for content type, frame, referrer, permissions, and CSP protection
+  - reusable PowerShell deployment script that validates `.env`, checks Docker Compose availability, runs Compose build/start, and optionally runs smoke verification
+  - reusable PowerShell backup and restore scripts for MySQL dumps and upload volume archives, with automatic `.env` validation/import
+  - restore script backup-path resolution so database and upload backups fail fast before Docker restore commands
+  - reusable PowerShell pre-start environment validation script for Compose `.env` secrets and CORS
+  - reusable PowerShell deployment smoke verification script for health, public API, protected API, headers, and CORS checks
+  - smoke verification now checks the full deployment security header set on public health and protected API responses
+  - reusable PowerShell deployment evidence collection script that records Compose config/status, health response, smoke output, and service log tails on Docker-enabled hosts
+  - reusable PowerShell production acceptance script that composes deployment, smoke verification, evidence collection, and optional `Web_User` real-backend smoke
+  - reusable PowerShell frontend integration smoke script that starts a no-database backend smoke server and runs `web_user` real-backend e2e
+  - reusable PowerShell local acceptance script that groups backend tests, frontend tests/build/e2e, no-database real-backend smoke, and diff checks without calling Docker
+  - `.env.example` for deployment inputs
+  - `BACKEND_DEPLOYMENT.md` with startup, health check, migration, logging, persistence, update, and security notes
+  - `BACKEND_DEPLOYMENT_TRACEABILITY.md` mapping design/deployment requirements to implementation and verification evidence
+  - GitHub Actions backend CI workflow for JDK 17 Maven tests, whitespace check, temporary-env Compose config validation, and Docker image build
+- Added GitHub Actions frontend integration smoke workflow:
+  - checks out the backend branch and `Web_User` frontend branch
+  - starts backend in no-database smoke mode on port 18080
+  - runs `web_user` real-backend e2e with `VITE_ENABLE_MOCKS=false`
+- Added database-aware `/api/health` behavior:
+  - returns unified response with `database=UP` after `SELECT 1` succeeds
+  - returns HTTP `503` with the same response wrapper when the configured datasource is unavailable
+  - keeps no-database smoke tests runnable with `database=UNCONFIGURED`
+- Added global exception observability:
+  - business and validation exceptions are logged at `WARN`
+  - unexpected system exceptions are logged at `ERROR`
+  - unified API error responses remain unchanged
+- Tightened authenticated account guards against the three Markdown design documents:
+  - JWT authentication now rejects accounts whose `locked_until` is still in the future
+  - shared member/admin lookup now requires `status=NORMAL`, no soft delete, and no active temporary lock
+  - protected member/admin workflows therefore reject disabled, deleted, and temporarily locked accounts before business execution
+  - resource details now expose non-`PUBLISHED` resources only to the publisher or a normal unlocked administrator
+  - comment creation now requires a commentable target: resources must be `PUBLISHED`, requests must be `ONGOING`, and replies must reference an active top-level parent on the same target
+  - comment deletion now soft-deletes only the owner's active comment and decrements the target comment count with a non-negative guard
+  - comment likes now require an active, non-deleted comment before writing `user_interaction`
+  - comment creation, reply, and edit now validate content against enabled `sensitive_word` rules before writing comments
+  - request replies that reference an internal resource now require that resource to be `PUBLISHED`
+  - request publishing now validates title and content length plus enabled `sensitive_word` rules before writing `request_post`
+  - request replies now require content, a published referenced resource, or an external URL before writing `request_reply`; provided reply content is length-checked and sensitive-word checked
+  - resource publishing now validates title, description, summary, tags, sensitive words, and enabled second-level category before writing `resource_info`
+- Added handoff documents required by the spec:
+  - `API_CONTRACT.md`
+  - `FRONTEND_INTEGRATION_GUIDE.md`
+  - `SCHEMA.md`
+  - `SPEC_DEPLOYMENT_ACCEPTANCE.md`
+- Extended frontend handoff notes with `web_user` mock-to-backend switching steps, including `VITE_API_BASE_URL`, MSW/mock disablement, CORS origins, and backend smoke verification.
+- Updated the `Web_User` real-backend e2e smoke so it derives the expected backend API origin from `VITE_API_BASE_URL` and `VITE_API_PREFIX`, avoiding a hard-coded local smoke port during production acceptance.
+- Added deployment regression tests for production config, JWT secret guard behavior, Dockerfile, Compose wiring, ignored secrets, deployment guide, and traceability checklist requirements.
+- Added deployment script regression tests for the production acceptance script:
+  - missing `.env` fails before Docker commands
+  - `-SkipBuild` validates `.env` and then reports missing Docker through a controlled no-Docker PATH
+- Tightened deployment alignment against the three Markdown design documents, local `规范.docx`, and four PDF extracts:
+  - MySQL Compose now uses server-side `utf8mb4` while the JDBC URL avoids invalid Java charset aliases
+  - Compose volumes now use stable explicit names for MySQL data and backend uploads
+  - deploy, backup, and restore scripts now pass the supplied `.env` to Docker Compose through `--env-file`
+  - deployment, backup, restore, evidence, and production acceptance scripts now resolve relative paths from the backend directory and run Docker Compose from the backend directory
+  - backup and restore `.env` import now overrides stale process-level environment variables from previous PowerShell sessions
+  - backup and restore scripts now fail clearly after validation when Docker is unavailable
+  - deployment, backup, restore, evidence collection, production acceptance, frontend smoke, and local acceptance scripts now explicitly fail on non-zero native command exit codes
+  - deployment evidence collection now writes `deployment-acceptance-summary.json` and fails unless health reports `database=UP` and deployment smoke verification passes
+  - production acceptance now writes frontend production smoke status and log into the same deployment acceptance summary when `-FrontendDir` is supplied
+  - deployment acceptance summary generation now lives in `deployment-summary.ps1`, so production acceptance can update summary evidence without dot-sourcing the full evidence collector
+  - deployment script regression tests now locate `pwsh`/PowerShell from `PATH` and create cross-platform fake Docker shims so GitHub Actions Linux runners exercise the same script gates
+  - Compose and `.env.example` now expose Spring multipart limits (`UPLOAD_MAX_FILE_SIZE`, `UPLOAD_MAX_REQUEST_SIZE`) alongside business upload limits (`UPLOAD_MAX_FILE_SIZE_MB`, `UPLOAD_MAX_FILES_PER_RESOURCE`)
+  - deploy verification now waits for `/api/health` to report `database=UP` with configurable timeout instead of using a fixed sleep
+  - production acceptance, frontend integration, and local acceptance scripts now resolve `npm`/Maven wrapper commands across Windows and non-Windows PowerShell hosts, use platform-neutral script paths, and make `./mvnw` executable when needed on Unix-like hosts
+  - deployment smoke verification now handles PowerShell 7 `-SkipHttpErrorCheck` and Windows PowerShell response header shapes, so 401 protected-route checks and security/CORS header checks are stable across deployment hosts
+
+## Current Design Choices
+
+- `DesignSpecForumService` is now a facade and keeps the original public methods as controller-compatible delegators.
+- Identity, resource, file, interaction, request reward, catalog, system config, member-status, and audit facade paths now use the new module implementations instead of `LegacyDesignSpecForumService`.
+- Notification controller compatibility remains on the root `NotificationService` facade, while the implementation lives under `service.notification`.
+- Backend deployment uses `SPRING_PROFILES_ACTIVE=prod`; production-only differences are supplied by environment variables instead of committed secrets.
+- Production backend startup now fails fast when `JWT_SECRET`, database password, or CORS origins are unsafe.
+- Docker Compose runs MySQL 8 and the Spring Boot backend together, with Flyway migrations enabled during backend startup.
+- Docker Compose sets server-side MySQL `utf8mb4`; the JDBC URL relies on Connector/J negotiation instead of the invalid Java charset alias `utf8mb4`.
+- Docker Compose uses explicit persistent volume names `resource-sharing-forum_mysql_data` and `resource-sharing-forum_backend_uploads`, matching backup/restore defaults.
+- Docker deployment now targets Maven + JDK 17 + Docker as required by the detailed design document.
+- Frontend origins are controlled through `CORS_ALLOWED_ORIGINS`.
+- Upload size limits are controlled through both Spring multipart variables and forum upload business-rule variables so container startup and service validation stay aligned.
+- Frontend integration handoff now documents how to move the `web_user` branch from MSW mock mode to the deployed backend.
+- Request trace ids are returned as `X-Trace-Id` and included in logs through MDC.
+- Authenticated request user ids are included in logs through MDC when JWT authentication succeeds.
+- Global exception handling logs recoverable and system failures with the severity levels required by the coding/design documents.
+- Login, registration, and password-reset endpoints have deployment-configurable rate limiting.
+- API responses include deployment security headers.
+- `/api/health` now verifies database readiness in configured deployments while preserving the response wrapper.
+- CI now checks backend tests, `git diff --check`, Compose config with strong dummy environment values, and Docker image build on GitHub runners.
+- Backend CI now includes the actual remote frontend branch name `Web_User` as well as lowercase `web_user`.
+- Backend CI now packages the backend jar and uploads a `backend-deployment-handoff` artifact with Docker, Compose, Maven metadata, `.env.example`, prod config, migration, scripts, the jar, API, frontend handoff, schema, and acceptance documents, while excluding real `.env` secrets.
+- Frontend integration CI now verifies that `Web_User` can call the configured backend over real HTTP without MSW intercepting the resource list request.
+- `scripts/deploy.ps1` provides the standard backend deployment entrypoint with pre-start `.env` validation, Docker Compose availability checks, and optional smoke verification.
+- `scripts/backup.ps1` and `scripts/restore.ps1` document and automate the required backup/restore workflow and load `.env` before Docker commands.
+- `scripts/deploy.ps1`, `scripts/backup.ps1`, and `scripts/restore.ps1` pass the selected `.env` to Docker Compose with `--env-file` instead of relying on an implicit default file.
+- Deployment scripts preserve absolute paths and resolve relative `.env`, backup, restore, evidence, and frontend paths from stable backend-root context where applicable.
+- Backup and restore scripts treat the supplied `.env` as authoritative for imported process variables such as `MYSQL_DATABASE` and `MYSQL_ROOT_PASSWORD`.
+- Backup and restore scripts now check Docker availability explicitly after `.env` and path validation, so no-Docker hosts fail with controlled deployment messages.
+- Deployment scripts explicitly check native command exit codes for Docker Compose, Docker backup/restore commands, npm frontend smoke commands, and local acceptance steps.
+- `scripts/collect-deployment-evidence.ps1` produces a machine-readable deployment acceptance summary after validating `data.status=UP`, `data.database=UP`, and smoke verification success.
+- `scripts/verify-production-acceptance.ps1 -FrontendDir ...` records `frontend-smoke.txt` and rewrites the summary with frontend smoke status so frontend handoff evidence is not separate from backend evidence.
+- `scripts/deployment-summary.ps1` keeps summary generation reusable without running evidence collection side effects.
+- Deployment script tests are portable across Windows PowerShell and GitHub Actions Linux runners by resolving `pwsh`/PowerShell from `PATH` and generating both Windows and Unix fake Docker commands.
+- Acceptance scripts are portable across Windows and non-Windows PowerShell hosts by resolving `npm` vs `npm.cmd`, `mvnw` vs `mvnw.cmd`, avoiding Windows-only path separators for script execution, and applying `chmod +x` to `mvnw` when needed.
+- `scripts/verify-deployment.ps1` now normalizes HTTP error handling and response header lookup across PowerShell versions, including `WebHeaderCollection` responses from older hosts.
+- `scripts/deploy.ps1 -Verify` polls `/api/health` until the database is ready before running full deployment smoke verification; `verify-production-acceptance.ps1` can pass through `-ReadinessTimeoutSeconds`.
+- `scripts/restore.ps1` validates database and upload backup paths before running restore commands.
+- `scripts/validate-env.ps1` rejects placeholder or weak deployment `.env` values before Compose startup.
+- `scripts/verify-deployment.ps1` documents and automates post-start smoke verification, including database readiness through `/api/health`.
+- `scripts/collect-deployment-evidence.ps1` documents and automates Docker-host deployment evidence capture for final assembly.
+- `scripts/verify-production-acceptance.ps1` documents and automates the Docker-host production acceptance chain.
+- `scripts/verify-frontend-integration.ps1` documents and automates local no-database backend plus `web_user` real-backend contract smoke.
+- `scripts/verify-local-acceptance.ps1` documents and automates the current no-Docker local acceptance gate.
+- `SPEC_DEPLOYMENT_ACCEPTANCE.md` maps the three Markdown design documents, `规范.docx`, and the four PDFs to deployment, API, database, security, logging, backup, and frontend-handoff evidence.
+- `LegacyDesignSpecForumService` still contains duplicated legacy code during the transition, but it is no longer the facade entrypoint for the migrated design-spec module services.
+- Controllers continue to call the facade.
+- API responses remain `{ code, message, data, timestamp }`.
+- Pagination remains `{ total, list, page, size }`.
+- The service still returns `Map<String, Object>` for compatibility.
+- DTO packages are deferred to the next phase.
+
+## Remaining Work
+
+- Remove or reduce duplicated identity and interaction code from `LegacyDesignSpecForumService` after all internal callers are confirmed migrated.
+- Replace remaining transitional delegation inside any future non-design-spec domain services with owned SQL and helper usage.
+- Remove or reduce duplicated resource code from `LegacyDesignSpecForumService` after all internal callers are confirmed migrated.
+- Continue expanding notification scenarios only when new business workflows are migrated.
+- Wire any remaining admin operation call sites in future migrated workflows through `AdminLogService`.
+- Replace download URL placeholder behavior with real file stream or signed URL.
+- Add Redis-backed token blacklist or token version invalidation.
+- Add real email delivery; current reset-code flow remains development-oriented.
+- Add object storage adapter if the project leaves local file storage.
+- Add deployment-specific reverse proxy, TLS, and domain routing when leaving local Compose deployment.
+- Add CI image build and remote release workflow when the target hosting environment is selected.
+
+## Risks
+
+- `LegacyDesignSpecForumService` still directly uses `JdbcTemplate` and contains duplicated SQL for transition safety until legacy is fully dismantled.
+- Some migrated identity, resource, interaction, request, admin-management, and audit logic is duplicated in legacy for transition safety.
+- Legacy still contains duplicated notification helper code, but migrated workflow notifications now go through `NotificationDispatcher`.
+- Some legacy fallback paths remain for no-database smoke tests.
+- Testcontainers tests are skipped automatically when Docker is unavailable.
+- Docker image build needs network access the first time it pulls base images and Maven dependencies.
+- Docker Compose deployment still depends on operator-provided `.env` secrets.
+- `CORS_ALLOWED_ORIGINS` must be updated to the real frontend deployment origin before production use.
+- Current local environment does not have the `docker` command available, so Compose config expansion, image build, and container startup must be verified in a Docker-enabled deployment environment.
+
+## Verification
+
+Run before each commit:
+
+```powershell
+.\mvnw.cmd -s D:\tmp\maven-aliyun-settings.xml test
+git diff --check
+```
+
+Latest local verification:
+
+- `.\mvnw.cmd -s D:\tmp\maven-aliyun-settings.xml test`: passed.
+- Result: 84 tests, 0 failures, 0 errors, 9 skipped.
+- Skipped tests: Testcontainers-backed MySQL tests were skipped because local Docker was not available.
+- `.\mvnw.cmd -s D:\tmp\maven-aliyun-settings.xml "-Dtest=BackendDeploymentConfigTest,DeploymentScriptsTest" test`: passed, 35 tests, 0 failures, 0 errors.
+- `.\scripts\verify-local-acceptance.ps1 -FrontendDir ..\.worktrees\Web_User`: passed after the deployment-script and Compose hardening updates.
+  - Backend Maven tests: 84 tests, 0 failures, 0 errors, 9 skipped.
+  - Frontend unit tests: 4 files, 11 tests passed.
+  - Frontend production build: passed, with Vite large-chunk warning only.
+  - Frontend default e2e: 2 tests passed.
+  - `Web_User` real-backend smoke: 1 Playwright test passed against the configured no-database backend on port 18080.
+  - Backend and `Web_User` `git diff --check`: passed, with Windows CRLF conversion warnings only.
+- Standalone `git diff --check`: passed, with Windows CRLF conversion warnings only.
+- `docker compose config`: not run locally because `docker` is not installed in the current environment.
+- `scripts/verify-deployment.ps1`: not run locally because no backend container is running in this environment.
+- `Web_User npm run test:e2e:backend`: passed against the configured local no-database backend smoke server on port 18080.
+- `.\scripts\verify-frontend-integration.ps1 -FrontendDir ..\.worktrees\Web_User`: available as the one-command local contract smoke entrypoint.
+- `.\scripts\verify-local-acceptance.ps1 -FrontendDir ..\.worktrees\Web_User`: available as the no-Docker local acceptance entrypoint.
+- Final production acceptance still requires a Docker-enabled host and must confirm `/api/health` returns `data.status="UP"` and `data.database="UP"`.
+- Docker-host evidence should include `deployment-evidence\<timestamp>\deployment-acceptance-summary.json` with `passed=true`, `healthDatabase="UP"`, and, when frontend smoke is requested, `frontendSmokeStatus="PASSED"`.
