@@ -550,7 +550,7 @@ public class LegacyDesignSpecForumService {
                 LEFT JOIN resource_category c2 ON c2.id = r.category_id
                 LEFT JOIN resource_category c1 ON c1.id = c2.parent_id
                 %s
-                ORDER BY r.update_time DESC, r.id DESC
+                ORDER BY r.updated_at DESC, r.id DESC
                 LIMIT ?, ?
                 """.formatted(where), resourceMapper(adminAccountId), args.toArray());
         return new PageResult<>(total, list, page, size);
@@ -662,7 +662,7 @@ public class LegacyDesignSpecForumService {
         jdbc.update("""
                 INSERT INTO user_interaction(member_id, target_type, target_id, action_type, status)
                 VALUES (?, 'RESOURCE', ?, ?, 'ACTIVE')
-                ON DUPLICATE KEY UPDATE status = IF(status = 'ACTIVE', 'CANCELLED', 'ACTIVE'), update_time = NOW(3)
+                ON DUPLICATE KEY UPDATE status = IF(status = 'ACTIVE', 'CANCELLED', 'ACTIVE'), updated_at = NOW(3)
                 """, memberId, resourceId, actionType);
         jdbc.update("""
                 UPDATE resource_info r
@@ -783,7 +783,7 @@ public class LegacyDesignSpecForumService {
                     LEFT JOIN resource_category c2 ON c2.id = rp.category_id
                     LEFT JOIN resource_category c1 ON c1.id = c2.parent_id
                     %s
-                    ORDER BY rp.create_time DESC, rp.id DESC
+                    ORDER BY rp.created_at DESC, rp.id DESC
                     LIMIT ?, ?
                     """.formatted(where), requestMapper(), args.toArray());
             return new PageResult<>(total, list, page, size);
@@ -882,7 +882,7 @@ public class LegacyDesignSpecForumService {
                     FROM request_reply rr
                     JOIN member_profile mp ON mp.id = rr.replier_id
                     WHERE rr.request_id = ? AND rr.status = 'ACTIVE' AND rr.deleted_at IS NULL
-                    ORDER BY rr.is_accepted DESC, rr.create_time DESC
+                    ORDER BY rr.is_accepted DESC, rr.created_at DESC
                     LIMIT ?, ?
                     """, replyMapper(), requestId, (page - 1) * size, size);
             return new PageResult<>(total, list, page, size);
@@ -1023,7 +1023,7 @@ public class LegacyDesignSpecForumService {
         jdbc.update("""
                 INSERT INTO user_interaction(member_id, target_type, target_id, action_type, status)
                 VALUES (?, 'COMMENT', ?, 'LIKE', 'ACTIVE')
-                ON DUPLICATE KEY UPDATE status = IF(status = 'ACTIVE', 'CANCELLED', 'ACTIVE'), update_time = NOW(3)
+                ON DUPLICATE KEY UPDATE status = IF(status = 'ACTIVE', 'CANCELLED', 'ACTIVE'), updated_at = NOW(3)
                 """, memberId, commentId);
         return comment(commentId, accountId);
     }
@@ -1126,10 +1126,10 @@ public class LegacyDesignSpecForumService {
         }
         long total = jdbc.queryForObject("SELECT COUNT(*) FROM admin_operation_log WHERE deleted_at IS NULL", Long.class);
         List<Map<String, Object>> list = jdbc.query("""
-                SELECT id, operation_type, target_type, target_id, content, create_time
+                SELECT id, operation_type, target_type, target_id, content, created_at
                 FROM admin_operation_log
                 WHERE deleted_at IS NULL
-                ORDER BY create_time DESC
+                ORDER BY created_at DESC
                 LIMIT ?, ?
                 """, (rs, rowNum) -> map(
                 "id", rs.getLong("id"),
@@ -1137,7 +1137,7 @@ public class LegacyDesignSpecForumService {
                 "targetType", rs.getString("target_type"),
                 "targetId", rs.getObject("target_id"),
                 "content", rs.getString("content"),
-                "time", date(rs.getObject("create_time", LocalDateTime.class))
+                "time", date(rs.getObject("created_at", LocalDateTime.class))
         ), (page - 1) * size, size);
         return new PageResult<>(total, list, page, size);
     }
@@ -1165,7 +1165,7 @@ public class LegacyDesignSpecForumService {
         args.add((page - 1) * size);
         args.add(size);
         List<Map<String, Object>> list = jdbc.query("""
-                SELECT id, parent_id, category_name, level_no, status, sort_order, create_time
+                SELECT id, parent_id, category_name, level_no, status, sort_order, created_at
                 FROM resource_category
                 %s
                 ORDER BY level_no ASC, sort_order ASC, id ASC
@@ -1178,7 +1178,7 @@ public class LegacyDesignSpecForumService {
                 "level", rs.getInt("level_no"),
                 "status", rs.getString("status"),
                 "sortOrder", rs.getInt("sort_order"),
-                "date", date(rs.getObject("create_time", LocalDateTime.class))
+                "date", date(rs.getObject("created_at", LocalDateTime.class))
         ), args.toArray());
         return new PageResult<>(total, list, page, size);
     }
@@ -1265,7 +1265,7 @@ public class LegacyDesignSpecForumService {
         args.add((page - 1) * size);
         args.add(size);
         List<Map<String, Object>> list = jdbc.query("""
-                SELECT id, tag_name, use_count, status, create_time
+                SELECT id, tag_name, use_count, status, created_at
                 FROM tag_info
                 %s
                 ORDER BY use_count DESC, id ASC
@@ -1276,7 +1276,7 @@ public class LegacyDesignSpecForumService {
                 "tagName", rs.getString("tag_name"),
                 "useCount", rs.getInt("use_count"),
                 "status", rs.getString("status"),
-                "date", date(rs.getObject("create_time", LocalDateTime.class))
+                "date", date(rs.getObject("created_at", LocalDateTime.class))
         ), args.toArray());
         return new PageResult<>(total, list, page, size);
     }
@@ -1502,7 +1502,7 @@ public class LegacyDesignSpecForumService {
             return map("id", categoryId, "status", "ENABLED");
         }
         return jdbc.queryForObject("""
-                SELECT id, parent_id, category_name, level_no, status, sort_order, create_time
+                SELECT id, parent_id, category_name, level_no, status, sort_order, created_at
                 FROM resource_category
                 WHERE id = ? AND deleted_at IS NULL
                 """, (rs, rowNum) -> map(
@@ -1513,7 +1513,7 @@ public class LegacyDesignSpecForumService {
                 "level", rs.getInt("level_no"),
                 "status", rs.getString("status"),
                 "sortOrder", rs.getInt("sort_order"),
-                "date", date(rs.getObject("create_time", LocalDateTime.class))
+                "date", date(rs.getObject("created_at", LocalDateTime.class))
         ), categoryId);
     }
 
@@ -1523,7 +1523,7 @@ public class LegacyDesignSpecForumService {
             return map("id", tagId, "status", "ENABLED");
         }
         return jdbc.queryForObject("""
-                SELECT id, tag_name, use_count, status, create_time
+                SELECT id, tag_name, use_count, status, created_at
                 FROM tag_info
                 WHERE id = ? AND deleted_at IS NULL
                 """, (rs, rowNum) -> map(
@@ -1532,7 +1532,7 @@ public class LegacyDesignSpecForumService {
                 "tagName", rs.getString("tag_name"),
                 "useCount", rs.getInt("use_count"),
                 "status", rs.getString("status"),
-                "date", date(rs.getObject("create_time", LocalDateTime.class))
+                "date", date(rs.getObject("created_at", LocalDateTime.class))
         ), tagId);
     }
 
@@ -1661,11 +1661,11 @@ public class LegacyDesignSpecForumService {
                     WHERE target_type = ? AND target_id = ? AND status = 'ACTIVE' AND parent_id IS NULL AND deleted_at IS NULL
                     """, Long.class, targetType, targetId);
             List<Map<String, Object>> list = jdbc.query("""
-                    SELECT ci.id, ci.target_type, ci.target_id, ci.content, ci.create_time, ci.member_id, ci.parent_id, mp.nickname
+                    SELECT ci.id, ci.target_type, ci.target_id, ci.content, ci.created_at, ci.member_id, ci.parent_id, mp.nickname
                     FROM comment_info ci
                     JOIN member_profile mp ON mp.id = ci.member_id
                     WHERE ci.target_type = ? AND ci.target_id = ? AND ci.status = 'ACTIVE' AND ci.parent_id IS NULL AND ci.deleted_at IS NULL
-                    ORDER BY ci.create_time DESC
+                    ORDER BY ci.created_at DESC
                     LIMIT ?, ?
                     """, commentMapper(accountId), targetType, targetId, (page - 1) * size, size);
             return new PageResult<>(total, list, page, size);
@@ -1680,7 +1680,7 @@ public class LegacyDesignSpecForumService {
             return map("id", commentId, "content", "", "date", today(), "mine", true);
         }
         return jdbc.queryForObject("""
-                SELECT ci.id, ci.target_type, ci.target_id, ci.content, ci.create_time, ci.member_id, ci.parent_id, mp.nickname
+                SELECT ci.id, ci.target_type, ci.target_id, ci.content, ci.created_at, ci.member_id, ci.parent_id, mp.nickname
                 FROM comment_info ci
                 JOIN member_profile mp ON mp.id = ci.member_id
                 WHERE ci.id = ?
@@ -1733,7 +1733,7 @@ public class LegacyDesignSpecForumService {
                     "commentCount", rs.getInt("comment_count"),
                     "score", rs.getBigDecimal("average_rating") == null ? 0 : rs.getBigDecimal("average_rating").doubleValue(),
                     "ratingCount", rs.getInt("rating_count"),
-                    "date", date(rs.getObject("create_time", LocalDateTime.class)),
+                    "date", date(rs.getObject("created_at", LocalDateTime.class)),
                     "publishedAt", date(rs.getObject("published_time", LocalDateTime.class)),
                     "tags", resourceTags(id),
                     "attachments", attachments,
@@ -1760,7 +1760,7 @@ public class LegacyDesignSpecForumService {
                 "replyCount", rs.getInt("answer_count"),
                 "commentCount", rs.getInt("comment_count"),
                 "author", rs.getString("author_name"),
-                "date", date(rs.getObject("create_time", LocalDateTime.class)),
+                "date", date(rs.getObject("created_at", LocalDateTime.class)),
                 "status", rs.getString("status"),
                 "tags", requestTags(rs.getLong("id")),
                 "expectedFormat", firstNonBlank(rs.getString("expected_format"), "不限"),
@@ -1777,7 +1777,7 @@ public class LegacyDesignSpecForumService {
                 "resourceId", rs.getObject("resource_id"),
                 "externalUrl", rs.getString("external_url"),
                 "accepted", rs.getInt("is_accepted") == 1,
-                "date", date(rs.getObject("create_time", LocalDateTime.class))
+                "date", date(rs.getObject("created_at", LocalDateTime.class))
         );
     }
 
@@ -1791,7 +1791,7 @@ public class LegacyDesignSpecForumService {
                     "parentId", rs.getObject("parent_id"),
                     "author", rs.getString("nickname"),
                     "content", rs.getString("content"),
-                    "date", date(rs.getObject("create_time", LocalDateTime.class)),
+                    "date", date(rs.getObject("created_at", LocalDateTime.class)),
                     "mine", Objects.equals(rs.getLong("member_id"), memberId),
                     "replies", List.of()
             );

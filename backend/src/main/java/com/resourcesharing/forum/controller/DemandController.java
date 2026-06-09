@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 @RestController
@@ -30,7 +31,10 @@ public class DemandController {
 
     @GetMapping("/{id}")
     public ApiResponse<Map<String, Object>> detail(@PathVariable Long id, Authentication authentication) {
-        return ApiResponse.success(forumService.requestDetail(id, accountId(authentication)));
+        Map<String, Object> detail = new LinkedHashMap<>(forumService.requestDetail(id, accountId(authentication)));
+        detail.putIfAbsent("demand", detail.get("request"));
+        detail.putIfAbsent("answers", detail.get("replies"));
+        return ApiResponse.success(detail);
     }
 
     @PostMapping
@@ -45,6 +49,21 @@ public class DemandController {
             Authentication authentication
     ) {
         return ApiResponse.created(forumService.addComment("REQUEST_POST", id, value(request, "content"), accountId(authentication)));
+    }
+
+    @GetMapping("/{id}/replies")
+    public ApiResponse<PageResult<Map<String, Object>>> replies(@PathVariable Long id, @RequestParam Map<String, String> params) {
+        return ApiResponse.success(forumService.listReplies(id, params));
+    }
+
+    @PostMapping("/{id}/replies")
+    public ApiResponse<Map<String, Object>> reply(@PathVariable Long id, @RequestBody Map<String, Object> request, Authentication authentication) {
+        return ApiResponse.created(forumService.replyRequest(id, accountId(authentication), request));
+    }
+
+    @PostMapping("/{id}/answers")
+    public ApiResponse<Map<String, Object>> answer(@PathVariable Long id, @RequestBody Map<String, Object> request, Authentication authentication) {
+        return reply(id, request, authentication);
     }
 
     private static Long accountId(Authentication authentication) {

@@ -29,7 +29,7 @@ public class FileService {
     public Map<String, Object> downloadAttachment(Long attachmentId, Long accountId) {
         JdbcTemplate jdbc = txSupport.jdbc();
         if (jdbc == null) {
-            return values.map("recordId", 1L, "fileName", "demo.zip", "downloadUrl", "/api/v1/attachments/" + attachmentId + "/download");
+            return values.map("recordId", 1L, "fileName", "demo.zip", "downloadUrl", "/api/v1/attachments/" + attachmentId + "/stream");
         }
         return txSupport.required(() -> {
             Long memberId = lookup.requireMemberId(accountId);
@@ -70,7 +70,42 @@ public class FileService {
             if (first) {
                 jdbc.update("UPDATE resource_info SET download_count = download_count + 1 WHERE id = ?", resourceId);
             }
-            return values.map("recordId", values.key(keyHolder), "fileName", attachment.get("fileName"), "downloadUrl", "/api/v1/attachments/" + attachmentId + "/download");
+            return values.map("recordId", values.key(keyHolder), "fileName", attachment.get("fileName"), "downloadUrl", "/api/v1/attachments/" + attachmentId + "/stream");
         });
+    }
+
+    public Map<String, Object> downloadResource(Long resourceId, Long attachmentId, Long accountId) {
+        JdbcTemplate jdbc = txSupport.jdbc();
+        if (jdbc == null) {
+            return downloadAttachment(attachmentId == null || attachmentId == 0 ? resourceId : attachmentId, accountId);
+        }
+        Long resolvedAttachmentId = attachmentId;
+        if (resolvedAttachmentId == null || resolvedAttachmentId == 0) {
+            try {
+                resolvedAttachmentId = jdbc.queryForObject("""
+                        SELECT id
+                        FROM file_attachment
+                        WHERE owner_type = 'RESOURCE' AND owner_id = ? AND status = 'NORMAL' AND deleted_at IS NULL
+                        ORDER BY id ASC
+                        LIMIT 1
+                        """, Long.class, resourceId);
+            } catch (Exception ignored) {
+                throw new BusinessException(ErrorCode.NOT_FOUND, "resource has no downloadable attachment");
+            }
+        }
+        Long ownerId;
+        try {
+            ownerId = jdbc.queryForObject("""
+                    SELECT owner_id
+                    FROM file_attachment
+                    WHERE id = ? AND owner_type = 'RESOURCE' AND status = 'NORMAL' AND deleted_at IS NULL
+                    """, Long.class, resolvedAttachmentId);
+        } catch (Exception ignored) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "attachment does not exist");
+        }
+        if (!resourceId.equals(ownerId)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "attachment does not belong to this resource");
+        }
+        return downloadAttachment(resolvedAttachmentId, accountId);
     }
 }

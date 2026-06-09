@@ -77,8 +77,11 @@ public class ValueSupport {
     }
 
     public Long longValue(String value, Long fallback) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
         try {
-            return value == null || value.isBlank() ? fallback : Long.parseLong(value);
+            return Long.parseLong(value);
         } catch (NumberFormatException ignored) {
             return fallback;
         }

@@ -3,6 +3,7 @@ package com.resourcesharing.forum.service.audit;
 import com.resourcesharing.forum.common.BusinessException;
 import com.resourcesharing.forum.common.ErrorCode;
 import com.resourcesharing.forum.service.notification.NotificationDispatcher;
+import com.resourcesharing.forum.service.resource.ResourceService;
 import com.resourcesharing.forum.service.support.ForumLookupService;
 import com.resourcesharing.forum.service.support.TxSupport;
 import com.resourcesharing.forum.service.support.ValueSupport;
@@ -25,19 +26,22 @@ public class AppealService {
     private final ForumLookupService lookup;
     private final AdminLogService adminLogService;
     private final NotificationDispatcher notificationDispatcher;
+    private final ResourceService resourceService;
 
     public AppealService(
             TxSupport txSupport,
             ValueSupport values,
             ForumLookupService lookup,
             AdminLogService adminLogService,
-            NotificationDispatcher notificationDispatcher
+            NotificationDispatcher notificationDispatcher,
+            ResourceService resourceService
     ) {
         this.txSupport = txSupport;
         this.values = values;
         this.lookup = lookup;
         this.adminLogService = adminLogService;
         this.notificationDispatcher = notificationDispatcher;
+        this.resourceService = resourceService;
     }
 
     public Map<String, Object> appeal(Long accountId, Map<String, Object> request) {
@@ -85,6 +89,14 @@ public class AppealService {
                     SET status = ?, handler_id = ?, handle_result = ?, handle_time = NOW(3)
                     WHERE id = ? AND deleted_at IS NULL
                     """, status, adminId, handleResult, appealId);
+            if ("APPROVED".equals(status) && "RESOURCE".equals(appeal.get("targetType"))) {
+                resourceService.transitionResourceByAdmin(
+                        values.number(appeal.get("targetId"), appealId),
+                        adminAccountId,
+                        "RESTORE",
+                        Map.of("reason", handleResult)
+                );
+            }
             adminLogService.record(adminId, "APPEAL_HANDLE", "APPEAL", appealId, before, status);
             notificationDispatcher.dispatchToMember(
                     values.number(appeal.get("appellantId"), 0L),

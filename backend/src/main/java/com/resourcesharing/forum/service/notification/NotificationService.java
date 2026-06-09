@@ -37,10 +37,10 @@ public class NotificationService {
                 WHERE receiver_id = ? AND deleted_at IS NULL
                 """, Long.class, memberId);
         List<Map<String, Object>> list = jdbc.query("""
-                SELECT id, notice_type, title, content, target_type, target_id, is_read, read_time, create_time
+                SELECT id, notice_type, title, content, target_type, target_id, is_read, read_time, created_at
                 FROM system_notice
                 WHERE receiver_id = ? AND deleted_at IS NULL
-                ORDER BY create_time DESC, id DESC
+                ORDER BY created_at DESC, id DESC
                 LIMIT ?, ?
                 """, (rs, rowNum) -> values.map(
                 "id", rs.getLong("id"),
@@ -51,7 +51,7 @@ public class NotificationService {
                 "targetId", rs.getObject("target_id") == null ? 0L : rs.getLong("target_id"),
                 "read", rs.getInt("is_read") == 1,
                 "readTime", rs.getObject("read_time") == null ? "" : String.valueOf(rs.getObject("read_time", LocalDateTime.class)),
-                "createTime", String.valueOf(rs.getObject("create_time", LocalDateTime.class))
+                "createTime", String.valueOf(rs.getObject("created_at", LocalDateTime.class))
         ), memberId, (page - 1) * size, size);
         return new PageResult<>(total, list, page, size);
     }

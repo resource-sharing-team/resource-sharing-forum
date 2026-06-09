@@ -84,6 +84,16 @@ public class AdminComplianceController {
         return ApiResponse.created(forumService.createTag(accountId(authentication), request));
     }
 
+    @PostMapping("/tags/backfill")
+    public ApiResponse<Map<String, Object>> backfillNormativeTags(Authentication authentication) {
+        return ApiResponse.success(forumService.backfillNormativeTags(accountId(authentication)));
+    }
+
+    @PutMapping("/tags/{id}")
+    public ApiResponse<Map<String, Object>> updateTag(@PathVariable Long id, @RequestBody Map<String, Object> request, Authentication authentication) {
+        return ApiResponse.success(forumService.updateTag(accountId(authentication), id, request));
+    }
+
     @PutMapping("/tags/{id}/disable")
     public ApiResponse<Map<String, Object>> disableTag(@PathVariable Long id, Authentication authentication) {
         return ApiResponse.success(forumService.disableTag(accountId(authentication), id));

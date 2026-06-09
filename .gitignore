@@ -23,8 +23,10 @@
 
 # Frontend build/runtime
 **/node_modules/
+**/.npm-cache/
 **/dist/
 **/.vite/
 **/.env.local
 /web_admin/*.log
-
+/web_user/*.log
+/debug.log

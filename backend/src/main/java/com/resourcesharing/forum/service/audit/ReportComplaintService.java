@@ -3,10 +3,13 @@ package com.resourcesharing.forum.service.audit;
 import com.resourcesharing.forum.common.BusinessException;
 import com.resourcesharing.forum.common.ErrorCode;
 import com.resourcesharing.forum.service.notification.NotificationDispatcher;
+import com.resourcesharing.forum.service.request.RequestRewardService;
+import com.resourcesharing.forum.service.resource.ResourceService;
 import com.resourcesharing.forum.service.support.ForumLookupService;
 import com.resourcesharing.forum.service.support.TxSupport;
 import com.resourcesharing.forum.service.support.ValueSupport;
 import com.resourcesharing.forum.service.system.AdminLogService;
+import com.resourcesharing.forum.service.system.AdminMemberService;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
@@ -25,19 +28,28 @@ public class ReportComplaintService {
     private final ForumLookupService lookup;
     private final AdminLogService adminLogService;
     private final NotificationDispatcher notificationDispatcher;
+    private final ResourceService resourceService;
+    private final RequestRewardService requestRewardService;
+    private final AdminMemberService adminMemberService;
 
     public ReportComplaintService(
             TxSupport txSupport,
             ValueSupport values,
             ForumLookupService lookup,
             AdminLogService adminLogService,
-            NotificationDispatcher notificationDispatcher
+            NotificationDispatcher notificationDispatcher,
+            ResourceService resourceService,
+            RequestRewardService requestRewardService,
+            AdminMemberService adminMemberService
     ) {
         this.txSupport = txSupport;
         this.values = values;
         this.lookup = lookup;
         this.adminLogService = adminLogService;
         this.notificationDispatcher = notificationDispatcher;
+        this.resourceService = resourceService;
+        this.requestRewardService = requestRewardService;
+        this.adminMemberService = adminMemberService;
     }
 
     public Map<String, Object> report(Long accountId, Map<String, Object> request) {
@@ -84,6 +96,9 @@ public class ReportComplaintService {
                     SET status = ?, handler_id = ?, handle_result = ?, handle_time = NOW(3)
                     WHERE id = ? AND deleted_at IS NULL
                     """, status, adminId, handleResult, reportId);
+            if ("RESOLVED".equals(status)) {
+                applyReportAction(jdbc, adminAccountId, report, request, handleResult);
+            }
             adminLogService.record(adminId, "REPORT_HANDLE", "REPORT_COMPLAINT", reportId, before, status);
             notificationDispatcher.dispatchToMember(
                     values.number(report.get("reporterId"), 0L),
@@ -100,12 +115,13 @@ public class ReportComplaintService {
     private Map<String, Object> reportForUpdate(JdbcTemplate jdbc, Long reportId) {
         try {
             return jdbc.queryForObject("""
-                    SELECT reporter_id, target_type, target_id, status
+                    SELECT reporter_id, report_type, target_type, target_id, status
                     FROM report_complaint
                     WHERE id = ? AND deleted_at IS NULL
                     FOR UPDATE
                     """, (rs, rowNum) -> values.map(
                     "reporterId", rs.getLong("reporter_id"),
+                    "reportType", rs.getString("report_type"),
                     "targetType", rs.getString("target_type"),
                     "targetId", rs.getLong("target_id"),
                     "status", rs.getString("status")
@@ -113,6 +129,44 @@ public class ReportComplaintService {
         } catch (DataAccessException exception) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "Report does not exist");
         }
+    }
+
+    private void applyReportAction(JdbcTemplate jdbc, Long adminAccountId, Map<String, Object> report, Map<String, Object> request, String reason) {
+        String targetType = String.valueOf(report.get("targetType"));
+        Long targetId = values.number(report.get("targetId"), 0L);
+        String requestedAction = values.firstNonBlank(values.value(request, "action", ""), defaultAction(report));
+        switch (requestedAction) {
+            case "delete-comment" -> jdbc.update("""
+                    UPDATE comment_info
+                    SET status = 'DELETED', deleted_at = NOW(3)
+                    WHERE id = ?
+                    """, targetId);
+            case "offline-resource" -> resourceService.transitionResourceByAdmin(targetId, adminAccountId, "OFFLINE", Map.of("reason", reason));
+            case "copyright-down-resource" -> resourceService.transitionResourceByAdmin(targetId, adminAccountId, "COPYRIGHT_DOWN", Map.of("reason", reason));
+            case "close-request" -> requestRewardService.closeRequestByAdmin(adminAccountId, targetId, Map.of("reason", reason));
+            case "delete-reply" -> requestRewardService.deleteReplyByAdmin(adminAccountId, targetId);
+            case "disable-user" -> adminMemberService.disableMember(adminAccountId, targetId, Map.of("reason", reason));
+            default -> {
+                if ("COMMENT".equals(targetType)) {
+                    jdbc.update("UPDATE comment_info SET status = 'DELETED', deleted_at = NOW(3) WHERE id = ?", targetId);
+                }
+            }
+        }
+    }
+
+    private String defaultAction(Map<String, Object> report) {
+        String reportType = String.valueOf(report.get("reportType"));
+        String targetType = String.valueOf(report.get("targetType"));
+        if ("COPYRIGHT".equals(reportType)) {
+            return "copyright-down-resource";
+        }
+        return switch (targetType) {
+            case "COMMENT" -> "delete-comment";
+            case "REQUEST_POST" -> "close-request";
+            case "REQUEST_REPLY" -> "delete-reply";
+            case "USER" -> "disable-user";
+            default -> "offline-resource";
+        };
     }
 
     private String reportTarget(String target) {

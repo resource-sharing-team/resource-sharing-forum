@@ -10,10 +10,22 @@ spring:
     multipart:
       max-file-size: 100MB
       max-request-size: 500MB
+  mail:
+    host: ${MAIL_HOST:smtp.qq.com}
+    port: ${MAIL_PORT:465}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    protocol: smtps
+    properties:
+      mail:
+        smtp:
+          auth: true
+          ssl:
+            enable: true
 
 forum:
   cors:
-    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000}
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,http://localhost:3000,http://127.0.0.1:3000}
   rate-limit:
     auth-window-seconds: ${AUTH_RATE_LIMIT_WINDOW_SECONDS:60}
     auth-max-requests: ${AUTH_RATE_LIMIT_MAX_REQUESTS:30}
@@ -25,6 +37,9 @@ forum:
     allowed-types: pdf,doc,docx,ppt,pptx,xls,xlsx,zip,rar,7z,png,jpg,txt,md
     max-file-size-mb: 100
     max-files-per-resource: 5
+  mail:
+    from: ${MAIL_FROM:}
+    code-expires-minutes: ${MAIL_CODE_EXPIRES_MINUTES:10}
 
 ---
 spring:
@@ -44,4 +59,3 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: true
     baseline-version: 0
-

@@ -65,17 +65,51 @@ public class RequestRewardService {
         }
         try {
             String keyword = values.blankToNull(params.get("keyword"));
+            String category2 = values.firstNonBlank(params.get("categoryId"), params.get("category2"), params.get("cate2"));
+            String category1 = values.firstNonBlank(params.get("category1"), params.get("cate1"));
+            String status = requestStatus(values.firstNonBlank(params.get("status"), ""));
+            String rewardRange = values.firstNonBlank(params.get("points"), params.get("rewardRange"), params.get("pointsFilter"));
             StringBuilder where = new StringBuilder("WHERE rp.deleted_at IS NULL");
             List<Object> args = new ArrayList<>();
             if (keyword != null) {
-                where.append(" AND (rp.title LIKE ? OR rp.content LIKE ?)");
+                where.append("""
+                         AND (
+                            rp.title LIKE ? OR rp.content LIKE ? OR rp.expected_format LIKE ?
+                            OR EXISTS (
+                                SELECT 1 FROM member_profile requester
+                                WHERE requester.id = rp.requester_id AND requester.nickname LIKE ?
+                            )
+                            OR EXISTS (
+                                SELECT 1
+                                FROM request_tag_rel rtr
+                                JOIN tag_info ti ON ti.id = rtr.tag_id
+                                WHERE rtr.request_id = rp.id AND ti.tag_name LIKE ?
+                            )
+                        )
+                        """);
                 String like = "%" + keyword + "%";
                 args.add(like);
                 args.add(like);
+                args.add(like);
+                args.add(like);
+                args.add(like);
             }
+            if (!category2.isBlank()) {
+                where.append(" AND rp.category_id = ?");
+                args.add(values.longValue(category2, 0L));
+            } else if (!category1.isBlank()) {
+                where.append(" AND rp.category_id IN (SELECT id FROM resource_category WHERE parent_id = ? AND deleted_at IS NULL)");
+                args.add(values.longValue(category1, 0L));
+            }
+            if (!status.isBlank()) {
+                where.append(" AND rp.status = ?");
+                args.add(status);
+            }
+            appendRewardRange(where, args, rewardRange);
             long total = jdbc.queryForObject("SELECT COUNT(*) FROM request_post rp " + where, Long.class, args.toArray());
             args.add((page - 1) * size);
             args.add(size);
+            String orderBy = requestOrderBy(values.firstNonBlank(params.get("sort"), "latest"), values.firstNonBlank(params.get("order"), params.get("direction"), "desc"));
             List<Map<String, Object>> list = jdbc.query("""
                     SELECT rp.*, mp.nickname AS author_name,
                            c2.id AS category2_id, c2.category_name AS category2_name,
@@ -85,9 +119,9 @@ public class RequestRewardService {
                     LEFT JOIN resource_category c2 ON c2.id = rp.category_id
                     LEFT JOIN resource_category c1 ON c1.id = c2.parent_id
                     %s
-                    ORDER BY rp.create_time DESC, rp.id DESC
+                    ORDER BY %s
                     LIMIT ?, ?
-                    """.formatted(where), mappings.requestMapper(), args.toArray());
+                    """.formatted(where, orderBy), mappings.requestMapper(), args.toArray());
             return new PageResult<>(total, list, page, size);
         } catch (DataAccessException ignored) {
             return new PageResult<>(1, List.of(defaultRequest()), page, size);
@@ -106,7 +140,7 @@ public class RequestRewardService {
         }
         return txSupport.required(() -> {
             Long memberId = lookup.requireMemberId(accountId);
-            int reward = Math.max(0, (int) values.number(values.firstPresent(request, "rewardPoints", "points"), 0L).longValue());
+            RewardSelection reward = resolveReward(jdbc, memberId, request);
             KeyHolder keyHolder = new GeneratedKeyHolder();
             jdbc.update(connection -> {
                 PreparedStatement statement = connection.prepareStatement("""
@@ -123,13 +157,13 @@ public class RequestRewardService {
                 statement.setString(3, title);
                 statement.setString(4, content);
                 statement.setString(5, values.firstNonBlank(values.value(request, "expectedFormat", ""), values.value(request, "format", ""), "unlimited"));
-                statement.setInt(6, reward);
+                statement.setInt(6, reward.points());
                 statement.setObject(7, null);
                 return statement;
             }, keyHolder);
             Long requestId = values.key(keyHolder);
-            if (reward > 0) {
-                pointManager.freezeForRequest(memberId, reward, requestId);
+            if (reward.points() > 0) {
+                pointManager.freezeForRequest(memberId, reward.points(), requestId);
             }
             insertRequestTags(jdbc, requestId, values.value(request, "tags", ""));
             jdbc.update("""
@@ -138,6 +172,89 @@ public class RequestRewardService {
                     """, requestId, accountId);
             return requestPost(requestId);
         });
+    }
+
+    private void appendRewardRange(StringBuilder where, List<Object> args, String rewardRange) {
+        switch (rewardRange) {
+            case "free" -> where.append(" AND rp.reward_points = 0");
+            case "0-100" -> where.append(" AND rp.reward_points > 0 AND rp.reward_points <= 100");
+            case "100-500" -> where.append(" AND rp.reward_points > 100 AND rp.reward_points <= 500");
+            case "500-2000" -> where.append(" AND rp.reward_points > 500 AND rp.reward_points <= 2000");
+            case "2000+" -> where.append(" AND rp.reward_points > 2000");
+            default -> {
+            }
+        }
+    }
+
+    private RewardSelection resolveReward(JdbcTemplate jdbc, Long memberId, Map<String, Object> request) {
+        int requestedPoints = (int) values.number(values.firstPresent(request, "rewardPoints", "points"), 0L).longValue();
+        if (requestedPoints < 0) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "reward points must be non-negative");
+        }
+        String rewardType = normalizeRewardType(values.value(request, "rewardType", ""), requestedPoints);
+        if ("FREE".equals(rewardType)) {
+            return new RewardSelection("FREE", 0);
+        }
+        if (requestedPoints < 1) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "point reward must be at least 1");
+        }
+        RewardLimit limit = rewardLimit(jdbc, memberId);
+        if (requestedPoints > limit.availablePoints()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "reward points exceed available points");
+        }
+        if (requestedPoints > limit.rewardLimit()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "reward points exceed member reward limit");
+        }
+        return new RewardSelection("POINT", requestedPoints);
+    }
+
+    private String normalizeRewardType(String rewardType, int requestedPoints) {
+        String normalized = rewardType == null ? "" : rewardType.trim().toUpperCase();
+        if (normalized.isBlank()) {
+            return requestedPoints > 0 ? "POINT" : "FREE";
+        }
+        return switch (normalized) {
+            case "FREE" -> "FREE";
+            case "POINT", "POINTS" -> "POINT";
+            default -> throw new BusinessException(ErrorCode.BAD_REQUEST, "reward type is invalid");
+        };
+    }
+
+    private RewardLimit rewardLimit(JdbcTemplate jdbc, Long memberId) {
+        Map<String, Object> row = jdbc.queryForObject("""
+                SELECT mpa.current_points, mpa.frozen_points, COALESCE(ml.reward_limit, 0) AS reward_limit
+                FROM member_point_account mpa
+                LEFT JOIN membership_level ml ON ml.id = mpa.level_id AND ml.deleted_at IS NULL
+                WHERE mpa.member_id = ? AND mpa.deleted_at IS NULL
+                FOR UPDATE
+                """, (rs, rowNum) -> values.map(
+                "currentPoints", rs.getInt("current_points"),
+                "frozenPoints", rs.getInt("frozen_points"),
+                "rewardLimit", rs.getInt("reward_limit")
+        ), memberId);
+        int currentPoints = (int) values.number(row.get("currentPoints"), 0L).longValue();
+        int frozenPoints = (int) values.number(row.get("frozenPoints"), 0L).longValue();
+        int memberRewardLimit = (int) values.number(row.get("rewardLimit"), 0L).longValue();
+        if (memberRewardLimit <= 0) {
+            memberRewardLimit = defaultRewardLimit(jdbc);
+        }
+        return new RewardLimit(Math.max(0, currentPoints - frozenPoints), memberRewardLimit);
+    }
+
+    private int defaultRewardLimit(JdbcTemplate jdbc) {
+        try {
+            String value = jdbc.queryForObject("""
+                    SELECT config_value
+                    FROM system_config
+                    WHERE config_key = 'request.default_reward_limit'
+                      AND is_enabled = 1
+                      AND deleted_at IS NULL
+                    LIMIT 1
+                    """, String.class);
+            return Math.max(1, values.intValue(value, 100));
+        } catch (DataAccessException ignored) {
+            return 100;
+        }
     }
 
     public Map<String, Object> requestDetail(Long requestId, Long accountId) {
@@ -201,7 +318,7 @@ public class RequestRewardService {
                     FROM request_reply rr
                     JOIN member_profile mp ON mp.id = rr.replier_id
                     WHERE rr.request_id = ? AND rr.status = 'ACTIVE' AND rr.deleted_at IS NULL
-                    ORDER BY rr.is_accepted DESC, rr.create_time DESC
+                    ORDER BY rr.is_accepted DESC, rr.created_at DESC
                     LIMIT ?, ?
                     """, mappings.replyMapper(), requestId, (page - 1) * size, size);
             return new PageResult<>(total, list, page, size);
@@ -445,11 +562,14 @@ public class RequestRewardService {
                     WHERE target_type = ? AND target_id = ? AND status = 'ACTIVE' AND parent_id IS NULL AND deleted_at IS NULL
                     """, Long.class, targetType, targetId);
             List<Map<String, Object>> list = jdbc.query("""
-                    SELECT ci.id, ci.target_type, ci.target_id, ci.content, ci.create_time, ci.member_id, ci.parent_id, mp.nickname
+                    SELECT ci.id, ci.target_type, ci.target_id, ci.content, ci.created_at, ci.member_id, ci.parent_id, mp.nickname,
+                           (SELECT COUNT(*) FROM user_interaction ui
+                            WHERE ui.target_type = 'COMMENT' AND ui.target_id = ci.id
+                              AND ui.action_type = 'LIKE' AND ui.status = 'ACTIVE' AND ui.deleted_at IS NULL) AS like_count
                     FROM comment_info ci
                     JOIN member_profile mp ON mp.id = ci.member_id
                     WHERE ci.target_type = ? AND ci.target_id = ? AND ci.status = 'ACTIVE' AND ci.parent_id IS NULL AND ci.deleted_at IS NULL
-                    ORDER BY ci.create_time DESC
+                    ORDER BY ci.created_at DESC
                     LIMIT ?, ?
                     """, mappings.commentMapper(accountId), targetType, targetId, (page - 1) * size, size);
             return new PageResult<>(total, list, page, size);
@@ -488,6 +608,7 @@ public class RequestRewardService {
                 "categoryId", 32L,
                 "category1", "3",
                 "category2", "32",
+                "rewardType", "POINT",
                 "rewardPoints", 50,
                 "points", 50,
                 "replyCount", 0,
@@ -499,5 +620,30 @@ public class RequestRewardService {
                 "expectedFormat", "zip or Git repository link",
                 "format", "zip or Git repository link"
         );
+    }
+
+    private String requestStatus(String displayStatus) {
+        return switch (displayStatus) {
+            case "active", "ONGOING" -> "ONGOING";
+            case "solved", "RESOLVED" -> "RESOLVED";
+            case "closed", "CLOSED" -> "CLOSED";
+            case "cancelled", "CANCELLED" -> "CANCELLED";
+            default -> "";
+        };
+    }
+
+    private String requestOrderBy(String sort, String order) {
+        String direction = "asc".equalsIgnoreCase(order) ? "ASC" : "DESC";
+        return switch (sort) {
+            case "reply" -> "rp.answer_count %s, rp.created_at DESC, rp.id DESC".formatted(direction);
+            case "points" -> "rp.reward_points %s, rp.created_at DESC, rp.id DESC".formatted(direction);
+            default -> "rp.created_at %s, rp.id %s".formatted(direction, direction);
+        };
+    }
+
+    private record RewardSelection(String type, int points) {
+    }
+
+    private record RewardLimit(int availablePoints, int rewardLimit) {
     }
 }

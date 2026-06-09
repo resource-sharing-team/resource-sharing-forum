@@ -5,6 +5,7 @@ import com.resourcesharing.forum.service.audit.AppealService;
 import com.resourcesharing.forum.service.audit.ReportComplaintService;
 import com.resourcesharing.forum.service.identity.AuthService;
 import com.resourcesharing.forum.service.identity.MemberService;
+import com.resourcesharing.forum.service.identity.ProfileSummaryService;
 import com.resourcesharing.forum.service.interaction.InteractionService;
 import com.resourcesharing.forum.service.request.RequestRewardService;
 import com.resourcesharing.forum.service.resource.ResourceQueryService;
@@ -22,6 +23,7 @@ import java.util.Map;
 public class DesignSpecForumService {
     private final AuthService authService;
     private final MemberService memberService;
+    private final ProfileSummaryService profileSummaryService;
     private final ResourceQueryService resourceQueryService;
     private final com.resourcesharing.forum.service.resource.ResourceService resourceService;
     private final com.resourcesharing.forum.service.resource.FileService fileService;
@@ -37,6 +39,7 @@ public class DesignSpecForumService {
     public DesignSpecForumService(
             AuthService authService,
             MemberService memberService,
+            ProfileSummaryService profileSummaryService,
             ResourceQueryService resourceQueryService,
             com.resourcesharing.forum.service.resource.ResourceService resourceService,
             com.resourcesharing.forum.service.resource.FileService fileService,
@@ -51,6 +54,7 @@ public class DesignSpecForumService {
     ) {
         this.authService = authService;
         this.memberService = memberService;
+        this.profileSummaryService = profileSummaryService;
         this.resourceQueryService = resourceQueryService;
         this.resourceService = resourceService;
         this.fileService = fileService;
@@ -72,12 +76,20 @@ public class DesignSpecForumService {
         return authService.register(request);
     }
 
+    public Map<String, Object> requestRegisterCode(Map<String, Object> request) {
+        return authService.requestRegisterCode(request);
+    }
+
     public Map<String, Object> userProfile(Long accountId) {
         return memberService.userProfile(accountId);
     }
 
     public Map<String, Object> updateUserProfile(Long accountId, Map<String, Object> request) {
         return memberService.updateUserProfile(accountId, request);
+    }
+
+    public Map<String, Object> profileSummary(Long accountId) {
+        return profileSummaryService.summary(accountId);
     }
 
     public Map<String, Object> changePassword(Long accountId, Map<String, Object> request) {
@@ -142,6 +154,10 @@ public class DesignSpecForumService {
 
     public Map<String, Object> downloadAttachment(Long attachmentId, Long accountId) {
         return fileService.downloadAttachment(attachmentId, accountId);
+    }
+
+    public Map<String, Object> downloadResource(Long resourceId, Long attachmentId, Long accountId) {
+        return fileService.downloadResource(resourceId, attachmentId, accountId);
     }
 
     public PageResult<Map<String, Object>> listRequests(Map<String, String> params) {
@@ -252,12 +268,24 @@ public class DesignSpecForumService {
         return adminCatalogService.createTag(adminAccountId, request);
     }
 
+    public Map<String, Object> updateTag(Long adminAccountId, Long tagId, Map<String, Object> request) {
+        return adminCatalogService.updateTag(adminAccountId, tagId, request);
+    }
+
     public Map<String, Object> disableTag(Long adminAccountId, Long tagId) {
         return adminCatalogService.disableTag(adminAccountId, tagId);
     }
 
     public Map<String, Object> mergeTags(Long adminAccountId, Map<String, Object> request) {
         return adminCatalogService.mergeTags(adminAccountId, request);
+    }
+
+    public Map<String, Object> catalogOptions() {
+        return adminCatalogService.catalogOptions();
+    }
+
+    public Map<String, Object> backfillNormativeTags(Long adminAccountId) {
+        return adminCatalogService.backfillNormativeTags(adminAccountId);
     }
 
     public Map<String, Object> systemConfig() {

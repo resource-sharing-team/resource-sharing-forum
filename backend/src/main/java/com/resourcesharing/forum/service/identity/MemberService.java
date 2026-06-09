@@ -47,7 +47,8 @@ public class MemberService {
             return jdbc.queryForObject("""
                     SELECT ua.id, ua.username, ua.email, ua.role, ua.password_changed_time,
                            mp.id AS member_id, mp.nickname, mp.avatar_url, mp.bio,
-                           ml.level_name, mpa.current_points, mpa.frozen_points
+                           ml.level_name, COALESCE(ml.reward_limit, 100) AS reward_limit,
+                           mpa.current_points, mpa.frozen_points
                     FROM user_account ua
                     LEFT JOIN member_profile mp ON mp.account_id = ua.id AND mp.deleted_at IS NULL
                     LEFT JOIN member_point_account mpa ON mpa.member_id = mp.id AND mpa.deleted_at IS NULL
@@ -170,10 +171,10 @@ public class MemberService {
                 """, Long.class, memberId);
         List<Map<String, Object>> list = jdbc.query("""
                 SELECT id, flow_type, scene, points_change, frozen_change, before_points, after_points,
-                       before_frozen_points, after_frozen_points, related_type, related_id, description, create_time
+                       before_frozen_points, after_frozen_points, related_type, related_id, description, created_at
                 FROM point_flow
                 WHERE member_id = ? AND deleted_at IS NULL
-                ORDER BY create_time DESC, id DESC
+                ORDER BY created_at DESC, id DESC
                 LIMIT ?, ?
                 """, (rs, rowNum) -> values.map(
                 "id", rs.getLong("id"),
@@ -188,9 +189,51 @@ public class MemberService {
                 "relatedType", rs.getString("related_type") == null ? "" : rs.getString("related_type"),
                 "relatedId", rs.getObject("related_id") == null ? 0L : rs.getLong("related_id"),
                 "description", rs.getString("description") == null ? "" : rs.getString("description"),
-                "createTime", String.valueOf(rs.getObject("create_time", LocalDateTime.class))
+                "createTime", String.valueOf(rs.getObject("created_at", LocalDateTime.class))
         ), memberId, (safePage - 1) * safeSize, safeSize);
         return new PageResult<>(total == null ? 0 : total, list, safePage, safeSize);
+    }
+
+    public Map<String, Object> pointAccount(Long accountId) {
+        JdbcTemplate jdbc = txSupport.jdbc();
+        if (jdbc == null || accountId == null) {
+            Map<String, Object> user = defaultUser(accountId);
+            return values.map(
+                    "points", user.get("points"),
+                    "frozenPoints", user.get("frozenPoints"),
+                    "availablePoints", user.get("availablePoints"),
+                    "level", user.get("level"),
+                    "rewardLimit", user.get("rewardLimit")
+            );
+        }
+        try {
+            return jdbc.queryForObject("""
+                    SELECT mpa.current_points, mpa.frozen_points, ml.level_name, COALESCE(ml.reward_limit, 100) AS reward_limit
+                    FROM member_profile mp
+                    LEFT JOIN member_point_account mpa ON mpa.member_id = mp.id AND mpa.deleted_at IS NULL
+                    LEFT JOIN membership_level ml ON ml.id = mpa.level_id
+                    WHERE mp.account_id = ? AND mp.deleted_at IS NULL
+                    """, (rs, rowNum) -> {
+                int points = rs.getInt("current_points");
+                int frozen = rs.getInt("frozen_points");
+                return values.map(
+                        "points", points,
+                        "frozenPoints", frozen,
+                        "availablePoints", Math.max(0, points - frozen),
+                        "level", rs.getString("level_name") == null ? "Member" : rs.getString("level_name"),
+                        "rewardLimit", rs.getInt("reward_limit")
+                );
+            }, accountId);
+        } catch (DataAccessException ignored) {
+            Map<String, Object> user = defaultUser(accountId);
+            return values.map(
+                    "points", user.get("points"),
+                    "frozenPoints", user.get("frozenPoints"),
+                    "availablePoints", user.get("availablePoints"),
+                    "level", user.get("level"),
+                    "rewardLimit", user.get("rewardLimit")
+            );
+        }
     }
 
     private Map<String, Object> defaultUser(Long accountId) {
@@ -209,6 +252,8 @@ public class MemberService {
                 "level", "Member",
                 "points", 650,
                 "frozenPoints", 0,
+                "availablePoints", 650,
+                "rewardLimit", 100,
                 "expNeeded", 350,
                 "passwordUpdatedAt", values.today()
         );

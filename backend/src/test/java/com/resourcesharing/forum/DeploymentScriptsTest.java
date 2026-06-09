@@ -105,7 +105,7 @@ class DeploymentScriptsTest {
 
         assertThat(result.exitCode()).isNotZero();
         assertThat(result.output()).contains("Environment file not found");
-        assertThat(result.output()).contains(callerOnlyEnvName);
+        assertThat(result.output().replaceAll("\\s+", "")).contains(callerOnlyEnvName);
         assertThat(result.output()).doesNotContain("Environment validation passed");
     }
 
@@ -450,8 +450,8 @@ class DeploymentScriptsTest {
     }
 
     private static ProcessResult runScriptWithoutDocker(String... command) throws IOException, InterruptedException {
-        String powerShellDir = Path.of(powerShellExecutable()).getParent().toString();
-        return runScriptWithEnvironment(powerShellDir, null, Map.of(), command);
+        Path noDockerPath = Files.createTempDirectory("no-docker-path");
+        return runScriptWithEnvironment(noDockerPath.toString(), null, Map.of(), command);
     }
 
     private static ProcessResult runPowerShellCommand(String command) throws IOException, InterruptedException {
@@ -485,7 +485,7 @@ class DeploymentScriptsTest {
                 exit /b 0
                 """);
         writeExecutable(fakeDockerDir.resolve("docker"), """
-                #!/usr/bin/env sh
+                #!/bin/sh
                 echo "$*" >> "$DOCKER_CAPTURE"
                 echo "MYSQL_DATABASE=$MYSQL_DATABASE" >> "$DOCKER_CAPTURE"
                 echo "MYSQL_ROOT_PASSWORD=$MYSQL_ROOT_PASSWORD" >> "$DOCKER_CAPTURE"
@@ -503,7 +503,7 @@ class DeploymentScriptsTest {
                 exit /b 42
                 """);
         writeExecutable(fakeDockerDir.resolve("docker"), """
-                #!/usr/bin/env sh
+                #!/bin/sh
                 echo FAKE_DOCKER_FAILURE
                 exit 42
                 """);
@@ -522,7 +522,7 @@ class DeploymentScriptsTest {
                 exit /b 43
                 """);
         writeExecutable(fakeDockerDir.resolve("docker"), """
-                #!/usr/bin/env sh
+                #!/bin/sh
                 if [ "$1" = "compose" ] && [ "$2" = "version" ]; then
                   echo Docker Compose version v2.0.0
                   exit 0

@@ -36,7 +36,8 @@ public class ResourceQueryService {
         }
         try {
             String keyword = values.blankToNull(params.get("keyword"));
-            String category = values.firstNonBlank(params.get("categoryId"), params.get("category2"), params.get("cate2"));
+            String category2 = values.firstNonBlank(params.get("categoryId"), params.get("category2"), params.get("cate2"));
+            String category1 = values.firstNonBlank(params.get("category1"), params.get("cate1"));
             String type = values.blankToNull(params.get("resourceType"));
             if (type == null) {
                 type = values.blankToNull(params.get("type"));
@@ -44,15 +45,34 @@ public class ResourceQueryService {
             StringBuilder where = new StringBuilder("WHERE r.deleted_at IS NULL AND r.status = 'PUBLISHED'");
             List<Object> args = new ArrayList<>();
             if (keyword != null) {
-                where.append(" AND (r.title LIKE ? OR r.summary LIKE ? OR r.description LIKE ?)");
+                where.append("""
+                         AND (
+                            r.title LIKE ? OR r.summary LIKE ? OR r.description LIKE ?
+                            OR EXISTS (
+                                SELECT 1 FROM member_profile publisher
+                                WHERE publisher.id = r.publisher_id AND publisher.nickname LIKE ?
+                            )
+                            OR EXISTS (
+                                SELECT 1
+                                FROM resource_tag_rel rtr
+                                JOIN tag_info ti ON ti.id = rtr.tag_id
+                                WHERE rtr.resource_id = r.id AND ti.tag_name LIKE ?
+                            )
+                        )
+                        """);
                 String like = "%" + keyword + "%";
                 args.add(like);
                 args.add(like);
                 args.add(like);
+                args.add(like);
+                args.add(like);
             }
-            if (!category.isBlank()) {
+            if (!category2.isBlank()) {
                 where.append(" AND r.category_id = ?");
-                args.add(values.longValue(category, 0L));
+                args.add(values.longValue(category2, 0L));
+            } else if (!category1.isBlank()) {
+                where.append(" AND r.category_id IN (SELECT id FROM resource_category WHERE parent_id = ? AND deleted_at IS NULL)");
+                args.add(values.longValue(category1, 0L));
             }
             if (type != null) {
                 where.append(" AND r.resource_type = ?");
@@ -61,6 +81,7 @@ public class ResourceQueryService {
             long total = jdbc.queryForObject("SELECT COUNT(*) FROM resource_info r " + where, Long.class, args.toArray());
             args.add((page - 1) * size);
             args.add(size);
+            String orderBy = resourceOrderBy(values.firstNonBlank(params.get("sort"), "latest"));
             List<Map<String, Object>> list = jdbc.query("""
                     SELECT r.*, mp.nickname AS author_name,
                            c2.id AS category2_id, c2.category_name AS category2_name,
@@ -70,9 +91,9 @@ public class ResourceQueryService {
                     LEFT JOIN resource_category c2 ON c2.id = r.category_id
                     LEFT JOIN resource_category c1 ON c1.id = c2.parent_id
                     %s
-                    ORDER BY r.published_time DESC, r.id DESC
+                    ORDER BY %s
                     LIMIT ?, ?
-                    """.formatted(where), mappings.resourceMapper(accountId), args.toArray());
+                    """.formatted(where, orderBy), mappings.resourceMapper(accountId), args.toArray());
             return new PageResult<>(total, list, page, size);
         } catch (DataAccessException ignored) {
             return new PageResult<>(1, List.of(defaultResource()), page, size);
@@ -118,7 +139,7 @@ public class ResourceQueryService {
                 LEFT JOIN resource_category c2 ON c2.id = r.category_id
                 LEFT JOIN resource_category c1 ON c1.id = c2.parent_id
                 %s
-                ORDER BY r.update_time DESC, r.id DESC
+                ORDER BY r.updated_at DESC, r.id DESC
                 LIMIT ?, ?
                 """.formatted(where), mappings.resourceMapper(adminAccountId), args.toArray());
         return new PageResult<>(total, list, page, size);
@@ -183,11 +204,14 @@ public class ResourceQueryService {
                     WHERE target_type = 'RESOURCE' AND target_id = ? AND status = 'ACTIVE' AND parent_id IS NULL AND deleted_at IS NULL
                     """, Long.class, resourceId);
             List<Map<String, Object>> list = jdbc.query("""
-                    SELECT ci.id, ci.target_type, ci.target_id, ci.content, ci.create_time, ci.member_id, ci.parent_id, mp.nickname
+                    SELECT ci.id, ci.target_type, ci.target_id, ci.content, ci.created_at, ci.member_id, ci.parent_id, mp.nickname,
+                           (SELECT COUNT(*) FROM user_interaction ui
+                            WHERE ui.target_type = 'COMMENT' AND ui.target_id = ci.id
+                              AND ui.action_type = 'LIKE' AND ui.status = 'ACTIVE' AND ui.deleted_at IS NULL) AS like_count
                     FROM comment_info ci
                     JOIN member_profile mp ON mp.id = ci.member_id
                     WHERE ci.target_type = 'RESOURCE' AND ci.target_id = ? AND ci.status = 'ACTIVE' AND ci.parent_id IS NULL AND ci.deleted_at IS NULL
-                    ORDER BY ci.create_time DESC
+                    ORDER BY ci.created_at DESC
                     LIMIT ?, ?
                     """, mappings.commentMapper(accountId), resourceId, (page - 1) * size, size);
             return new PageResult<>(total, list, page, size);
@@ -238,6 +262,14 @@ public class ResourceQueryService {
             case "模板" -> "TEMPLATE";
             case "链接" -> "LINK";
             default -> values.firstNonBlank(display).matches("[A-Z_]+") ? values.firstNonBlank(display) : "DOCUMENT";
+        };
+    }
+
+    private String resourceOrderBy(String sort) {
+        return switch (sort) {
+            case "download" -> "r.download_count DESC, r.published_time DESC, r.id DESC";
+            case "score" -> "r.average_rating DESC, r.rating_count DESC, r.published_time DESC, r.id DESC";
+            default -> "r.published_time DESC, r.id DESC";
         };
     }
 }

@@ -3,6 +3,7 @@ package com.resourcesharing.forum;
 import com.resourcesharing.forum.common.BusinessException;
 import com.resourcesharing.forum.service.point.PointManager;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
@@ -36,6 +37,7 @@ class PointManagerIntegrationTest {
     private final JdbcTemplate jdbcTemplate;
     private final PointManager pointManager;
 
+    @Autowired
     PointManagerIntegrationTest(JdbcTemplate jdbcTemplate, PointManager pointManager) {
         this.jdbcTemplate = jdbcTemplate;
         this.pointManager = pointManager;

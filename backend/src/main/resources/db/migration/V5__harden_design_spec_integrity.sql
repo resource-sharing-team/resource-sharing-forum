@@ -27,16 +27,16 @@ CREATE UNIQUE INDEX uk_report_active_target
     ON report_complaint (active_report_key);
 
 CREATE INDEX idx_download_member_resource_success_time
-    ON download_record (member_id, resource_id, status, create_time);
+    ON download_record (member_id, resource_id, status, created_at);
 
 CREATE INDEX idx_notice_receiver_unread_time
-    ON system_notice (receiver_id, is_read, deleted_at, create_time);
+    ON system_notice (receiver_id, is_read, deleted_at, created_at);
 
 CREATE INDEX idx_attachment_uploader_status
     ON file_attachment (uploader_id, status, deleted_at);
 
 CREATE INDEX idx_admin_log_target_time
-    ON admin_operation_log (target_type, target_id, create_time);
+    ON admin_operation_log (target_type, target_id, created_at);
 
 CREATE INDEX idx_request_deadline_status
     ON request_post (status, deadline_time);

@@ -3,6 +3,7 @@ package com.resourcesharing.forum.service;
 import com.resourcesharing.forum.common.BusinessException;
 import com.resourcesharing.forum.common.ErrorCode;
 import com.resourcesharing.forum.dto.FileDtos.AttachmentView;
+import org.springframework.dao.DataAccessException;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -127,6 +128,41 @@ public class FileService {
         ), resourceId);
     }
 
+    public AttachmentStream stream(Long attachmentId, Long accountId) {
+        JdbcTemplate jdbc = jdbc();
+        if (jdbc == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "attachment does not exist");
+        }
+        requireNormalAccount(jdbc, accountId);
+        AttachmentStream stream;
+        try {
+            stream = jdbc.queryForObject("""
+                    SELECT fa.original_file_name, fa.mime_type, fa.file_size, fa.storage_path, r.status
+                    FROM file_attachment fa
+                    JOIN resource_info r ON r.id = fa.owner_id AND fa.owner_type = 'RESOURCE'
+                    WHERE fa.id = ? AND fa.status = 'NORMAL' AND fa.deleted_at IS NULL
+                    """, (rs, rowNum) -> new AttachmentStream(
+                    rs.getString("original_file_name"),
+                    safeMime(rs.getString("mime_type")),
+                    rs.getLong("file_size"),
+                    rootDir.resolve(rs.getString("storage_path")).normalize(),
+                    rs.getString("status")
+            ), attachmentId);
+        } catch (DataAccessException ignored) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "attachment does not exist");
+        }
+        if (stream == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "attachment does not exist");
+        }
+        if (!"PUBLISHED".equals(stream.resourceStatus())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "resource is not published");
+        }
+        if (!stream.path().startsWith(rootDir) || !Files.exists(stream.path()) || !Files.isRegularFile(stream.path())) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "file does not exist");
+        }
+        return stream;
+    }
+
     @Transactional
     public AttachmentView bindToResource(Long attachmentId, Long resourceId, Long accountId) {
         JdbcTemplate jdbc = jdbc();
@@ -137,7 +173,7 @@ public class FileService {
         ensureResourceWritable(resourceId, accountId);
         int updated = jdbc.update("""
                 UPDATE file_attachment
-                SET owner_id = ?, status = 'NORMAL', update_time = NOW(3)
+                SET owner_id = ?, status = 'NORMAL', updated_at = NOW(3)
                 WHERE id = ? AND uploader_id = ? AND owner_type = 'RESOURCE' AND status = 'TEMP' AND deleted_at IS NULL
                 """, resourceId, attachmentId, accountId);
         if (updated == 0) {
@@ -245,5 +281,8 @@ public class FileService {
 
     private JdbcTemplate jdbc() {
         return jdbcProvider.getIfAvailable();
+    }
+
+    public record AttachmentStream(String fileName, String mimeType, long fileSize, Path path, String resourceStatus) {
     }
 }

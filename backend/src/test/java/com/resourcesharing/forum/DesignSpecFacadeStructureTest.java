@@ -7,6 +7,7 @@ import com.resourcesharing.forum.service.audit.AppealService;
 import com.resourcesharing.forum.service.audit.ReportComplaintService;
 import com.resourcesharing.forum.service.identity.AuthService;
 import com.resourcesharing.forum.service.identity.MemberService;
+import com.resourcesharing.forum.service.identity.ProfileSummaryService;
 import com.resourcesharing.forum.service.interaction.InteractionService;
 import com.resourcesharing.forum.service.notification.NotificationDispatcher;
 import com.resourcesharing.forum.service.notification.NotificationEventService;
@@ -14,6 +15,7 @@ import com.resourcesharing.forum.service.request.RequestRewardService;
 import com.resourcesharing.forum.service.resource.ResourceQueryService;
 import com.resourcesharing.forum.service.support.ContentModerationService;
 import com.resourcesharing.forum.service.system.AdminCatalogService;
+import com.resourcesharing.forum.service.system.AdminDashboardService;
 import com.resourcesharing.forum.service.system.AdminLogService;
 import com.resourcesharing.forum.service.system.AdminMemberService;
 import com.resourcesharing.forum.service.system.AdminSystemService;
@@ -46,6 +48,7 @@ class DesignSpecFacadeStructureTest {
         assertThat(dependencyTypes).contains(
                 AuthService.class,
                 MemberService.class,
+                ProfileSummaryService.class,
                 ResourceQueryService.class,
                 com.resourcesharing.forum.service.resource.ResourceService.class,
                 com.resourcesharing.forum.service.resource.FileService.class,
@@ -75,12 +78,14 @@ class DesignSpecFacadeStructureTest {
     void migratedDomainServicesDoNotDependOnLegacyImplementation() {
         assertNoLegacyDependency(AuthService.class);
         assertNoLegacyDependency(MemberService.class);
+        assertNoLegacyDependency(ProfileSummaryService.class);
         assertNoLegacyDependency(ResourceQueryService.class);
         assertNoLegacyDependency(com.resourcesharing.forum.service.resource.ResourceService.class);
         assertNoLegacyDependency(com.resourcesharing.forum.service.resource.FileService.class);
         assertNoLegacyDependency(InteractionService.class);
         assertNoLegacyDependency(RequestRewardService.class);
         assertNoLegacyDependency(AdminCatalogService.class);
+        assertNoLegacyDependency(AdminDashboardService.class);
         assertNoLegacyDependency(AdminSystemService.class);
         assertNoLegacyDependency(AdminMemberService.class);
         assertNoLegacyDependency(ReportComplaintService.class);

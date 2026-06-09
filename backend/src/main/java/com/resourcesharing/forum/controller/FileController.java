@@ -4,10 +4,16 @@ import com.resourcesharing.forum.common.ApiResponse;
 import com.resourcesharing.forum.dto.FileDtos.AttachmentView;
 import com.resourcesharing.forum.service.DesignSpecForumService;
 import com.resourcesharing.forum.service.FileService;
+import org.springframework.core.io.UrlResource;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 
@@ -36,6 +42,20 @@ public class FileController {
         return ApiResponse.success(forumService.downloadAttachment(id, accountId(authentication)));
     }
 
+    @GetMapping("/{id}/stream")
+    public ResponseEntity<org.springframework.core.io.Resource> stream(@PathVariable Long id, Authentication authentication) throws Exception {
+        FileService.AttachmentStream stream = fileService.stream(id, accountId(authentication));
+        UrlResource resource = new UrlResource(stream.path().toUri());
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(stream.mimeType()))
+                .contentLength(stream.fileSize())
+                .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
+                        .filename(stream.fileName(), StandardCharsets.UTF_8)
+                        .build()
+                        .toString())
+                .body(resource);
+    }
+
     @GetMapping("/resources/{resourceId}")
     public ApiResponse<List<AttachmentView>> listByResource(@PathVariable Long resourceId) {
         return ApiResponse.success(fileService.listByResource(resourceId));
@@ -61,4 +81,3 @@ public class FileController {
         }
     }
 }
-

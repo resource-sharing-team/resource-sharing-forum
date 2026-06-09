@@ -5,6 +5,7 @@ import com.resourcesharing.forum.service.MemberService;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
@@ -24,8 +25,14 @@ public class MemberController {
     }
 
     @GetMapping("/me/points")
-    public ApiResponse<Object> pointFlows(Authentication authentication) {
-        return ApiResponse.success(memberService.pointFlows(accountId(authentication)));
+    public ApiResponse<Map<String, Object>> pointFlows(
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(required = false) Integer size,
+            @RequestParam(required = false) Integer pageSize,
+            Authentication authentication
+    ) {
+        int requestedSize = size == null ? (pageSize == null ? 20 : pageSize) : size;
+        return ApiResponse.success(memberService.pointOverview(accountId(authentication), page, requestedSize));
     }
 
     private static Long accountId(Authentication authentication) {
@@ -39,4 +46,3 @@ public class MemberController {
         }
     }
 }
-

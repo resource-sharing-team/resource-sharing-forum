@@ -17,7 +17,18 @@ public class MemberService {
         return delegate.userProfile(accountId);
     }
 
-    public PageResult<Map<String, Object>> pointFlows(Long accountId) {
-        return delegate.pointFlows(accountId, 1, 20);
+    public Map<String, Object> pointAccount(Long accountId) {
+        return delegate.pointAccount(accountId);
+    }
+
+    public PageResult<Map<String, Object>> pointFlows(Long accountId, int page, int size) {
+        return delegate.pointFlows(accountId, page, size);
+    }
+
+    public Map<String, Object> pointOverview(Long accountId, int page, int size) {
+        return Map.of(
+                "account", pointAccount(accountId),
+                "flows", pointFlows(accountId, page, size)
+        );
     }
 }

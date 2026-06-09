@@ -82,7 +82,7 @@ public class ResourceController {
             @RequestBody(required = false) Map<String, Object> request,
             Authentication authentication
     ) {
-        return ApiResponse.success(forumService.downloadAttachment(longValue(request, "attachmentId", id), accountId(authentication)));
+        return ApiResponse.success(forumService.downloadResource(id, longValue(request, "attachmentId", null), accountId(authentication)));
     }
 
     @PostMapping("/{id}/rating")
@@ -145,4 +145,3 @@ public class ResourceController {
         return value == null ? "" : String.valueOf(value);
     }
 }
-

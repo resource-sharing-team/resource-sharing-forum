@@ -18,24 +18,31 @@ public class MappingSupport {
     }
 
     public RowMapper<Map<String, Object>> userMapper() {
-        return (rs, rowNum) -> values.map(
-                "id", rs.getLong("id"),
-                "memberId", rs.getLong("member_id"),
-                "username", rs.getString("username"),
-                "nickname", firstNonBlank(rs.getString("nickname"), rs.getString("username")),
-                "email", rs.getString("email"),
-                "role", roleForToken(rs.getString("role")),
-                "status", "NORMAL",
-                "emailVerified", true,
-                "bio", firstNonBlank(rs.getString("bio"), ""),
-                "contact", rs.getString("email"),
-                "avatar", firstNonBlank(rs.getString("avatar_url"), ""),
-                "level", firstNonBlank(rs.getString("level_name"), "Member"),
-                "points", rs.getInt("current_points"),
-                "frozenPoints", rs.getInt("frozen_points"),
-                "expNeeded", Math.max(0, 1000 - rs.getInt("current_points")),
-                "passwordUpdatedAt", values.date(rs.getObject("password_changed_time", java.time.LocalDateTime.class))
-        );
+        return (rs, rowNum) -> {
+            int currentPoints = rs.getInt("current_points");
+            int frozenPoints = rs.getInt("frozen_points");
+            int availablePoints = Math.max(0, currentPoints - frozenPoints);
+            return values.map(
+                    "id", rs.getLong("id"),
+                    "memberId", rs.getLong("member_id"),
+                    "username", rs.getString("username"),
+                    "nickname", firstNonBlank(rs.getString("nickname"), rs.getString("username")),
+                    "email", rs.getString("email"),
+                    "role", roleForToken(rs.getString("role")),
+                    "status", "NORMAL",
+                    "emailVerified", true,
+                    "bio", firstNonBlank(rs.getString("bio"), ""),
+                    "contact", rs.getString("email"),
+                    "avatar", firstNonBlank(rs.getString("avatar_url"), ""),
+                    "level", firstNonBlank(rs.getString("level_name"), "Member"),
+                    "points", currentPoints,
+                    "frozenPoints", frozenPoints,
+                    "availablePoints", availablePoints,
+                    "rewardLimit", rs.getInt("reward_limit"),
+                    "expNeeded", Math.max(0, 1000 - currentPoints),
+                    "passwordUpdatedAt", values.date(rs.getObject("password_changed_time", java.time.LocalDateTime.class))
+            );
+        };
     }
 
     public RowMapper<Map<String, Object>> resourceMapper(Long accountId) {
@@ -63,7 +70,7 @@ public class MappingSupport {
                     "commentCount", rs.getInt("comment_count"),
                     "score", rs.getBigDecimal("average_rating") == null ? 0 : rs.getBigDecimal("average_rating").doubleValue(),
                     "ratingCount", rs.getInt("rating_count"),
-                    "date", values.date(rs.getObject("create_time", java.time.LocalDateTime.class)),
+                    "date", values.date(rs.getObject("created_at", java.time.LocalDateTime.class)),
                     "publishedAt", values.date(rs.getObject("published_time", java.time.LocalDateTime.class)),
                     "tags", lookup.resourceTags(id),
                     "attachments", attachments,
@@ -85,12 +92,13 @@ public class MappingSupport {
                 "categoryId", rs.getObject("category2_id"),
                 "category1", values.stringId(rs.getObject("category1_id")),
                 "category2", values.stringId(rs.getObject("category2_id")),
+                "rewardType", rs.getInt("reward_points") > 0 ? "POINT" : "FREE",
                 "rewardPoints", rs.getInt("reward_points"),
                 "points", rs.getInt("reward_points"),
                 "replyCount", rs.getInt("answer_count"),
                 "commentCount", rs.getInt("comment_count"),
                 "author", rs.getString("author_name"),
-                "date", values.date(rs.getObject("create_time", java.time.LocalDateTime.class)),
+                "date", values.date(rs.getObject("created_at", java.time.LocalDateTime.class)),
                 "status", rs.getString("status"),
                 "tags", lookup.requestTags(rs.getLong("id")),
                 "expectedFormat", firstNonBlank(rs.getString("expected_format"), "unlimited"),
@@ -107,7 +115,7 @@ public class MappingSupport {
                 "resourceId", rs.getObject("resource_id"),
                 "externalUrl", rs.getString("external_url"),
                 "accepted", rs.getInt("is_accepted") == 1,
-                "date", values.date(rs.getObject("create_time", java.time.LocalDateTime.class))
+                "date", values.date(rs.getObject("created_at", java.time.LocalDateTime.class))
         );
     }
 
@@ -121,8 +129,10 @@ public class MappingSupport {
                     "parentId", rs.getObject("parent_id"),
                     "author", rs.getString("nickname"),
                     "content", rs.getString("content"),
-                    "date", values.date(rs.getObject("create_time", java.time.LocalDateTime.class)),
+                    "date", values.date(rs.getObject("created_at", java.time.LocalDateTime.class)),
                     "mine", Objects.equals(rs.getLong("member_id"), memberId),
+                    "likeCount", rs.getInt("like_count"),
+                    "liked", lookup.interactionActive(memberId, "COMMENT", rs.getLong("id"), "LIKE"),
                     "replies", List.of()
             );
         };
@@ -130,13 +140,13 @@ public class MappingSupport {
 
     private static String displayResourceType(String type) {
         return switch (type == null ? "" : type.trim()) {
-            case "SOFTWARE" -> "software";
-            case "SOURCE_CODE" -> "source";
-            case "MATERIAL" -> "material";
-            case "COURSE" -> "course";
-            case "TEMPLATE" -> "template";
-            case "LINK" -> "link";
-            default -> "document";
+            case "SOFTWARE" -> "软件";
+            case "SOURCE_CODE" -> "源码";
+            case "MATERIAL" -> "素材";
+            case "COURSE" -> "教程";
+            case "TEMPLATE" -> "模板";
+            case "LINK" -> "链接";
+            default -> "文档";
         };
     }
 

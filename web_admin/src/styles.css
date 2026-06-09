@@ -230,15 +230,34 @@ td:last-child {
 }
 
 .page-box {
-  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
   margin-top: 16px;
 }
 
+.page-summary {
+  color: #55745f;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.page-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .page-btn {
-  padding: 5px 10px;
+  min-width: 32px;
+  height: 30px;
+  padding: 0 10px;
   border: 1px solid #ccc;
   background: #fff;
-  margin: 0 3px;
   border-radius: 3px;
   cursor: pointer;
 }
@@ -255,8 +274,44 @@ td:last-child {
   cursor: not-allowed;
 }
 
+.page-ellipsis {
+  min-width: 24px;
+  color: #7a8f80;
+  text-align: center;
+}
+
 .toolbar {
   margin-top: 16px;
+}
+
+.catalog-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.catalog-tab {
+  min-width: 78px;
+  height: 32px;
+  border: 1px solid #c8e6c9;
+  background: #fff;
+  color: #2e7d32;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.catalog-tab.active {
+  background: #2e7d32;
+  color: #fff;
+  border-color: #2e7d32;
+  font-weight: 700;
+}
+
+.catalog-toolbar {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .modal {
@@ -276,6 +331,10 @@ td:last-child {
   border-radius: 6px;
 }
 
+.catalog-modal {
+  width: 460px;
+}
+
 .modal-title {
   font-size: 15px;
   margin-bottom: 15px;
@@ -291,6 +350,34 @@ td:last-child {
   border-radius: 4px;
   resize: none;
   margin-bottom: 15px;
+}
+
+.modal-field {
+  display: block;
+  margin-bottom: 12px;
+}
+
+.modal-field span {
+  display: block;
+  color: #2e7d32;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+.modal-field input,
+.modal-field select {
+  width: 100%;
+  height: 34px;
+  padding: 6px 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: #fff;
+}
+
+.modal-help {
+  margin: -2px 0 12px;
+  color: #777;
+  font-size: 12px;
 }
 
 .modal-actions {
@@ -409,7 +496,11 @@ td:last-child {
   height: 65vmax;
   right: -22vmax;
   top: -28vmax;
-  background: radial-gradient(circle, rgb(60 160 100 / 8%) 0%, rgb(60 160 100 / 0%) 70%);
+  background: radial-gradient(
+    circle,
+    rgb(60 160 100 / 8%) 0%,
+    rgb(60 160 100 / 0%) 70%
+  );
 }
 
 .login-page::after {
@@ -417,7 +508,11 @@ td:last-child {
   height: 55vmax;
   left: -22vmax;
   bottom: -24vmax;
-  background: radial-gradient(circle, rgb(50 140 90 / 6%) 0%, rgb(50 140 90 / 0%) 70%);
+  background: radial-gradient(
+    circle,
+    rgb(50 140 90 / 6%) 0%,
+    rgb(50 140 90 / 0%) 70%
+  );
 }
 
 .login-card {

@@ -15,7 +15,7 @@ ALTER TABLE resource_audit_record
         CHECK (audit_result IN ('APPROVED', 'REJECTED', 'OFFLINE', 'RESTORED', 'RISK_REVIEW', 'COPYRIGHT_DOWN', 'DELETED'));
 
 CREATE INDEX idx_notice_receiver_time
-    ON system_notice (receiver_id, create_time);
+    ON system_notice (receiver_id, created_at);
 
 CREATE INDEX idx_attachment_owner_status
     ON file_attachment (owner_type, owner_id, status, deleted_at);

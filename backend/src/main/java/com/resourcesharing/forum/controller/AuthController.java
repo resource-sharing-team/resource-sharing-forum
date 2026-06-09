@@ -23,6 +23,11 @@ public class AuthController {
         return ApiResponse.created(forumService.register(request));
     }
 
+    @PostMapping("/register/code")
+    public ApiResponse<Map<String, Object>> registerCode(@RequestBody Map<String, Object> request) {
+        return ApiResponse.success(forumService.requestRegisterCode(request));
+    }
+
     @PostMapping("/login")
     public ApiResponse<Map<String, Object>> login(@RequestBody Map<String, Object> request) {
         return ApiResponse.success(forumService.login(request));
@@ -44,4 +49,3 @@ public class AuthController {
     }
 
 }
-

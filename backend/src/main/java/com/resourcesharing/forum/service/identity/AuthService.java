@@ -25,7 +25,7 @@ import java.util.Map;
 public class AuthService {
     private static final long DEFAULT_ACCOUNT_ID = 1L;
     private static final long DEFAULT_MEMBER_ID = 1L;
-    private static final String ACCOUNT_TEMPORARILY_LOCKED = "\u7490\ufe40\u5f7f\u6d93\u5b58\u6902\u95bf\u4f78\u757e";
+    private static final String ACCOUNT_TEMPORARILY_LOCKED = "\u8d26\u53f7\u4e34\u65f6\u9501\u5b9a";
 
     private final TxSupport txSupport;
     private final ValueSupport values;
@@ -33,6 +33,7 @@ public class AuthService {
     private final JwtService jwtService;
     private final JwtProperties jwtProperties;
     private final PasswordEncoder passwordEncoder;
+    private final EmailCodeService emailCodeService;
 
     public AuthService(
             TxSupport txSupport,
@@ -40,7 +41,8 @@ public class AuthService {
             MappingSupport mappings,
             JwtService jwtService,
             JwtProperties jwtProperties,
-            PasswordEncoder passwordEncoder
+            PasswordEncoder passwordEncoder,
+            EmailCodeService emailCodeService
     ) {
         this.txSupport = txSupport;
         this.values = values;
@@ -48,6 +50,7 @@ public class AuthService {
         this.jwtService = jwtService;
         this.jwtProperties = jwtProperties;
         this.passwordEncoder = passwordEncoder;
+        this.emailCodeService = emailCodeService;
     }
 
     public Map<String, Object> login(Map<String, Object> request) {
@@ -118,12 +121,18 @@ public class AuthService {
         String username = values.value(request, "username", "");
         String email = values.value(request, "email", "");
         String password = values.value(request, "password", "");
+        String code = values.value(request, "code", "");
         if (jdbc == null) {
             return tokenResponse(defaultUser(DEFAULT_ACCOUNT_ID), "MEMBER");
         }
         if (username.isBlank() || email.isBlank() || !email.contains("@") || password.length() < 6) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "username, email and password are required");
         }
+        if (code.isBlank()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "verification code is required");
+        }
+        ensureRegisterAccountAvailable(jdbc, username, email);
+        emailCodeService.verifyRegisterCode(email, code);
         return txSupport.required(() -> {
             KeyHolder accountKey = new GeneratedKeyHolder();
             jdbc.update(connection -> {
@@ -162,11 +171,16 @@ public class AuthService {
         });
     }
 
+    public Map<String, Object> requestRegisterCode(Map<String, Object> request) {
+        String email = values.value(request, "email", "");
+        return emailCodeService.requestRegisterCode(email);
+    }
+
     public Map<String, Object> requestResetPasswordCode(Map<String, Object> request) {
         JdbcTemplate jdbc = txSupport.jdbc();
         String account = values.firstNonBlank(values.value(request, "account", ""), values.value(request, "email", ""));
         if (jdbc == null) {
-            return values.map("ok", true, "devCode", "000000");
+            return emailCodeService.requestResetPasswordCode(null, account);
         }
         try {
             Map<String, Object> row = jdbc.queryForObject("""
@@ -174,12 +188,7 @@ public class AuthService {
                     FROM user_account
                     WHERE (username = ? OR email = ?) AND deleted_at IS NULL
                     """, (rs, rowNum) -> values.map("id", rs.getLong("id"), "email", rs.getString("email")), account, account);
-            String code = "000000";
-            jdbc.update("""
-                    INSERT INTO email_verification_code(account_id, email, scene, code_hash, status, expire_time)
-                    VALUES (?, ?, 'RESET_PASSWORD', ?, 'UNUSED', DATE_ADD(NOW(3), INTERVAL 10 MINUTE))
-                    """, row.get("id"), row.get("email"), passwordEncoder.encode(code));
-            return values.map("ok", true, "email", row.get("email"), "devCode", code, "expiresInMinutes", 10);
+            return emailCodeService.requestResetPasswordCode(values.number(row.get("id"), 0L), String.valueOf(row.get("email")));
         } catch (DataAccessException exception) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "account does not exist");
         }
@@ -204,17 +213,7 @@ public class AuthService {
                         WHERE (username = ? OR email = ?) AND deleted_at IS NULL
                         FOR UPDATE
                         """, (rs, rowNum) -> values.map("id", rs.getLong("id"), "email", rs.getString("email")), account, account);
-                List<Map<String, Object>> codes = jdbc.query("""
-                        SELECT id, code_hash
-                        FROM email_verification_code
-                        WHERE account_id = ? AND scene = 'RESET_PASSWORD' AND status = 'UNUSED' AND expire_time > NOW(3)
-                        ORDER BY id DESC
-                        LIMIT 1
-                        """, (rs, rowNum) -> values.map("id", rs.getLong("id"), "hash", rs.getString("code_hash")), row.get("id"));
-                if (codes.isEmpty() || !passwordEncoder.matches(code, String.valueOf(codes.get(0).get("hash")))) {
-                    throw new BusinessException(ErrorCode.BAD_REQUEST, "verification code is invalid or expired");
-                }
-                jdbc.update("UPDATE email_verification_code SET status = 'USED', used_time = NOW(3) WHERE id = ?", codes.get(0).get("id"));
+                emailCodeService.verifyResetPasswordCode(values.number(row.get("id"), 0L), String.valueOf(row.get("email")), code);
                 jdbc.update("""
                         UPDATE user_account
                         SET password_hash = ?, password_changed_time = NOW(3), failed_login_count = 0, locked_until = NULL,
@@ -235,7 +234,8 @@ public class AuthService {
             return jdbc.queryForObject("""
                     SELECT ua.id, ua.username, ua.email, ua.role, ua.password_changed_time,
                            mp.id AS member_id, mp.nickname, mp.avatar_url, mp.bio,
-                           ml.level_name, mpa.current_points, mpa.frozen_points
+                           ml.level_name, COALESCE(ml.reward_limit, 100) AS reward_limit,
+                           mpa.current_points, mpa.frozen_points
                     FROM user_account ua
                     LEFT JOIN member_profile mp ON mp.account_id = ua.id AND mp.deleted_at IS NULL
                     LEFT JOIN member_point_account mpa ON mpa.member_id = mp.id AND mpa.deleted_at IS NULL
@@ -252,6 +252,23 @@ public class AuthService {
                 INSERT INTO login_record(account_id, login_account, result, fail_reason)
                 VALUES (?, ?, ?, ?)
                 """, accountId, loginAccount, result, failReason);
+    }
+
+    private void ensureRegisterAccountAvailable(JdbcTemplate jdbc, String username, String email) {
+        try {
+            Integer exists = jdbc.queryForObject("""
+                    SELECT COUNT(*)
+                    FROM user_account
+                    WHERE (username = ? OR email = ?) AND deleted_at IS NULL
+                    """, Integer.class, username, email);
+            if (exists != null && exists > 0) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "username or email is already used");
+            }
+        } catch (BusinessException exception) {
+            throw exception;
+        } catch (DataAccessException ignored) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "failed to check account availability");
+        }
     }
 
     private Map<String, Object> tokenResponse(Map<String, Object> user, String role) {
@@ -281,6 +298,8 @@ public class AuthService {
                 "level", "Member",
                 "points", 650,
                 "frozenPoints", 0,
+                "availablePoints", 650,
+                "rewardLimit", 100,
                 "expNeeded", 350,
                 "passwordUpdatedAt", values.today()
         );

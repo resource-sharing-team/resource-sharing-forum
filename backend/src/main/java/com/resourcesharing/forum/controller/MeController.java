@@ -43,7 +43,7 @@ public class MeController {
 
     @GetMapping("/summary")
     public ApiResponse<Map<String, Object>> summary(Authentication authentication) {
-        return ApiResponse.success(Map.of("profile", forumService.userProfile(accountId(authentication))));
+        return ApiResponse.success(forumService.profileSummary(accountId(authentication)));
     }
 
     private static Long accountId(Authentication authentication) {

@@ -51,9 +51,17 @@ public class SecurityConfig {
                                 "/api/demands/**",
                                 "/api/requests/**",
                                 "/api/comments/**",
+                                "/api/categories/**",
+                                "/api/tags/**",
+                                "/api/resource-types",
+                                "/api/announcements/**",
                                 "/api/v1/resources/**",
                                 "/api/v1/requests/**",
-                                "/api/v1/comments/**").permitAll()
+                                "/api/v1/comments/**",
+                                "/api/v1/categories/**",
+                                "/api/v1/tags/**",
+                                "/api/v1/resource-types",
+                                "/api/v1/announcements/**").permitAll()
                         .requestMatchers("/api/admin/**", "/api/v1/admin/**").hasRole("ADMIN")
                         .anyRequest().authenticated()
                 )
@@ -96,4 +104,3 @@ public class SecurityConfig {
                 .toList();
     }
 }
-
