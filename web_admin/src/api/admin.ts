@@ -94,15 +94,20 @@ const mockCatalog: AdminCatalogData = {
 const mockConfig: AdminConfigData = {
   memberLevels: clone(memberLevels).map((item, index) => ({ ...item, rawId: index + 1, id: String(index + 1) })),
   scoreRules: [
+    { key: 'point.daily_login', label: '每日登录 + 积分', value: '10', valueType: 'INTEGER' },
+    { key: 'point.resource_favorited', label: '资源被收藏 + 积分', value: '5', valueType: 'INTEGER' },
+    { key: 'point.resource_liked', label: '资源被点赞 + 积分', value: '3', valueType: 'INTEGER' },
     { key: 'point.resource_approved', label: '资源审核通过 + 积分', value: '10', valueType: 'INTEGER' },
-    { key: 'point.resource_downloaded', label: '资源被下载 + 积分/次', value: '2', valueType: 'INTEGER' },
-    { key: 'point.request_accepted', label: '求资源回答被采纳 + 奖励积分', value: '5', valueType: 'INTEGER' },
+    { key: 'point.resource_downloaded', label: '资源被下载 + 积分/次', value: '5', valueType: 'INTEGER' },
+    { key: 'point.request_accepted', label: '求资源回答被采纳 + 奖励积分', value: '10', valueType: 'INTEGER' },
+    { key: 'point.violation_penalty', label: '违规确认 - 扣积分', value: '10', valueType: 'INTEGER' },
     { key: 'point.resource_offline_penalty', label: '资源违规下架 - 扣积分', value: '20', valueType: 'INTEGER' },
     { key: 'point.comment_delete_penalty', label: '评论违规删除 - 扣积分', value: '5', valueType: 'INTEGER' },
   ],
   systemParams: [
     { key: 'upload.allowed_types', label: '允许上传文件类型', value: 'pdf,doc,docx,ppt,pptx,xls,xlsx,zip,rar,7z,png,jpg,jpeg,txt,md' },
     { key: 'resource.daily_publish_limit', label: '用户每日最大发布资源数', value: '5', valueType: 'INTEGER' },
+    { key: 'request.daily_publish_limit', label: '用户每日最大发布求资源数', value: '5', valueType: 'INTEGER' },
     { key: 'auth.email_code_minutes', label: '邮箱验证码有效期（分钟）', value: '10', valueType: 'INTEGER' },
     { key: 'auth.login_fail_lock_count', label: '连续登录失败锁定次数', value: '5', valueType: 'INTEGER' },
     { key: 'auth.login_fail_lock_minutes', label: '登录失败锁定时长（分钟）', value: '10', valueType: 'INTEGER' },

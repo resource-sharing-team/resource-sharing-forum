@@ -38,9 +38,13 @@ export default function PublishResourcePage() {
             files.forEach((file) => {
               if (file.originFileObj) formData.append('files', file.originFileObj);
             });
-            const resource = await publish.mutateAsync(formData);
-            message.success('资源已提交审核');
-            navigate(`/resources/${resource.id}`);
+            try {
+              const resource = await publish.mutateAsync(formData);
+              message.success('资源已提交审核');
+              navigate(`/resources/${resource.id}`);
+            } catch (error) {
+              message.error(error instanceof Error ? error.message : '发布失败，请稍后重试');
+            }
           }}
         >
           <Form.Item name="title" label="资源标题" extra="标题需清晰描述资源内容，便于搜索" rules={[{ required: true, message: '请输入资源标题' }]}>

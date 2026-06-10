@@ -4,6 +4,8 @@ import com.resourcesharing.forum.common.BusinessException;
 import com.resourcesharing.forum.common.ErrorCode;
 import com.resourcesharing.forum.domain.statemachine.ResourceStateMachine;
 import com.resourcesharing.forum.service.notification.NotificationDispatcher;
+import com.resourcesharing.forum.service.point.PointManager;
+import com.resourcesharing.forum.service.point.PointRuleService;
 import com.resourcesharing.forum.service.support.ContentModerationService;
 import com.resourcesharing.forum.service.support.ForumLookupService;
 import com.resourcesharing.forum.service.support.TxSupport;
@@ -34,6 +36,8 @@ public class ResourceService {
     private final AdminLogService adminLogService;
     private final NotificationDispatcher notificationDispatcher;
     private final ContentModerationService contentModerationService;
+    private final PointManager pointManager;
+    private final PointRuleService pointRules;
 
     public ResourceService(
             TxSupport txSupport,
@@ -42,7 +46,9 @@ public class ResourceService {
             ResourceQueryService resourceQueryService,
             AdminLogService adminLogService,
             NotificationDispatcher notificationDispatcher,
-            ContentModerationService contentModerationService
+            ContentModerationService contentModerationService,
+            PointManager pointManager,
+            PointRuleService pointRules
     ) {
         this.txSupport = txSupport;
         this.values = values;
@@ -51,6 +57,8 @@ public class ResourceService {
         this.adminLogService = adminLogService;
         this.notificationDispatcher = notificationDispatcher;
         this.contentModerationService = contentModerationService;
+        this.pointManager = pointManager;
+        this.pointRules = pointRules;
     }
 
     public Map<String, Object> publishResource(Long accountId, Map<String, Object> request, List<MultipartFile> files) {
@@ -67,6 +75,7 @@ public class ResourceService {
         }
         return txSupport.required(() -> {
             Long memberId = lookup.requireMemberId(accountId);
+            ensureResourcePublishBenefits(jdbc, memberId, files);
             ensurePublishableCategory(jdbc, categoryId);
             ensureTagsUsable(jdbc, tags);
             String type = resourceType(values.firstNonBlank(values.value(request, "resourceType", ""), values.value(request, "type", "DOCUMENT")));
@@ -102,6 +111,7 @@ public class ResourceService {
                     INSERT INTO resource_status_log(resource_id, from_status, to_status, operator_id, reason)
                     VALUES (?, NULL, ?, ?, ?)
                     """, resourceId, initialStatus, accountId, draft ? "Saved as draft" : "Submitted for review");
+            incrementDailyPublishCount(jdbc, memberId);
             return resourceQueryService.resource(resourceId, accountId);
         });
     }
@@ -203,6 +213,7 @@ public class ResourceService {
                     VALUES (?, ?, ?, ?, ?)
                     """, resourceId, from, to, adminAccountId, reason);
             adminLogService.record(adminProfileId, "RESOURCE_" + auditResult, "RESOURCE", resourceId, from, to);
+            applyResourcePointRule(values.number(before.get("publisherId"), 0L), resourceId, adminAccountId, normalized, from, to, reason);
             notificationDispatcher.dispatchToMember(
                     values.number(before.get("publisherId"), 0L),
                     "RESOURCE_STATUS",
@@ -377,6 +388,81 @@ public class ResourceService {
             } catch (DataAccessException ignored) {
                 // New tags are created during relation insertion.
             }
+        }
+    }
+
+    private void ensureResourcePublishBenefits(JdbcTemplate jdbc, Long memberId, List<MultipartFile> files) {
+        Map<String, Object> benefits;
+        try {
+            benefits = memberBenefits(jdbc, memberId);
+        } catch (DataAccessException ignored) {
+            return;
+        }
+        int dailyLimit = Math.max(0, (int) values.number(benefits.get("dailyResourcePublishLimit"), 0L).longValue());
+        if (dailyLimit <= 0) {
+            dailyLimit = pointRules.resourceDailyPublishLimit();
+        }
+        if (dailyLimit > 0) {
+            Integer publishedToday = jdbc.queryForObject("""
+                    SELECT COUNT(*)
+                    FROM resource_info
+                    WHERE publisher_id = ?
+                      AND deleted_at IS NULL
+                      AND DATE(created_at) = CURRENT_DATE()
+                    """, Integer.class, memberId);
+            if (publishedToday != null && publishedToday >= dailyLimit) {
+                throw new BusinessException(ErrorCode.FORBIDDEN, "Daily resource publish limit has been reached");
+            }
+        }
+        List<MultipartFile> safeFiles = files == null ? List.of() : files.stream().filter(file -> file != null && !file.isEmpty()).toList();
+        int maxFiles = Math.max(1, (int) values.number(benefits.get("maxFilesPerResource"), 1L).longValue());
+        if (safeFiles.size() > maxFiles) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "Resource attachment count exceeds member level limit");
+        }
+        long maxBytes = Math.max(1, values.number(benefits.get("maxFileSizeMb"), 100L)) * 1024L * 1024L;
+        for (MultipartFile file : safeFiles) {
+            if (file.getSize() > maxBytes) {
+                throw new BusinessException(ErrorCode.FORBIDDEN, "Resource attachment size exceeds member level limit");
+            }
+        }
+    }
+
+    private Map<String, Object> memberBenefits(JdbcTemplate jdbc, Long memberId) {
+        return jdbc.queryForObject("""
+                SELECT COALESCE(ml.daily_resource_publish_limit, 0) AS daily_resource_publish_limit,
+                       COALESCE(ml.max_files_per_resource, 1) AS max_files_per_resource,
+                       COALESCE(ml.max_file_size_mb, 100) AS max_file_size_mb
+                FROM member_point_account mpa
+                LEFT JOIN membership_level ml ON ml.id = mpa.level_id AND ml.deleted_at IS NULL
+                WHERE mpa.member_id = ? AND mpa.deleted_at IS NULL
+                """, (rs, rowNum) -> values.map(
+                "dailyResourcePublishLimit", rs.getInt("daily_resource_publish_limit"),
+                "maxFilesPerResource", rs.getInt("max_files_per_resource"),
+                "maxFileSizeMb", rs.getInt("max_file_size_mb")
+        ), memberId);
+    }
+
+    private void incrementDailyPublishCount(JdbcTemplate jdbc, Long memberId) {
+        jdbc.update("""
+                INSERT INTO member_daily_stat(stat_date, member_id, publish_count)
+                VALUES (CURRENT_DATE(), ?, 1)
+                ON DUPLICATE KEY UPDATE publish_count = publish_count + 1
+                """, memberId);
+    }
+
+    private void applyResourcePointRule(Long publisherId, Long resourceId, Long adminAccountId, String action, String from, String to, String reason) {
+        if (publisherId == null || publisherId == 0) {
+            return;
+        }
+        if ("PUBLISHED".equals(to)) {
+            pointManager.earn(publisherId, pointRules.resourceApprovedPoints(), "RESOURCE_APPROVED", "RESOURCE",
+                    resourceId, adminAccountId, "Resource approved reward", "resource-approved:" + resourceId);
+            return;
+        }
+        if ("OFFLINE".equals(to) || "COPYRIGHT_DOWN".equals(to)) {
+            pointManager.deduct(publisherId, pointRules.resourceOfflinePenalty(), "RESOURCE_OFFLINE_PENALTY", "RESOURCE",
+                    resourceId, adminAccountId, values.firstNonBlank(reason, "Resource violation penalty"),
+                    "resource-offline-penalty:" + to + ":" + resourceId);
         }
     }
 

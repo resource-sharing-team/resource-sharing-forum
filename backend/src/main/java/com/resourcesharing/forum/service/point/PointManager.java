@@ -8,6 +8,32 @@ public interface PointManager {
 
     void transferReward(Long requestId, Long winnerMemberId);
 
+    void collectFrozenRequest(Long requestId, Long operatorId, String description);
+
+    void restoreCollectedRequest(Long requestId, Long operatorId, String description);
+
+    boolean earn(
+            Long memberId,
+            Integer points,
+            String scene,
+            String relatedType,
+            Long relatedId,
+            Long operatorId,
+            String description,
+            String bizKey
+    );
+
+    boolean deduct(
+            Long memberId,
+            Integer points,
+            String scene,
+            String relatedType,
+            Long relatedId,
+            Long operatorId,
+            String description,
+            String bizKey
+    );
+
     Long recordEvent(
             Long memberId,
             String type,

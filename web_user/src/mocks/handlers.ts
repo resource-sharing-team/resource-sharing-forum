@@ -87,6 +87,51 @@ export const handlers = [
     });
   }),
 
+  http.get('/api/v1/user/points', () => HttpResponse.json({
+    points: db.user.points,
+    frozenPoints: db.user.frozenPoints,
+    availablePoints: db.user.availablePoints,
+    level: db.user.level,
+    levelCode: db.user.levelCode,
+    levelInfo: db.user.levelInfo,
+    nextLevel: db.user.nextLevel,
+    nextLevelMinPoints: db.user.nextLevelMinPoints,
+    rewardLimit: db.user.rewardLimit,
+    expNeeded: db.user.expNeeded,
+    upgradeProgress: db.user.upgradeProgress,
+    progressPercent: db.user.progressPercent ?? db.user.upgradeProgress,
+    benefits: db.user.benefits || [],
+    pointRules: db.user.pointRules || db.user.rules || [],
+    rules: db.user.rules || db.user.pointRules || [],
+  })),
+
+  http.get('/api/v1/user/points/flows', ({ request }) => {
+    const url = new URL(request.url);
+    const page = Number(url.searchParams.get('page') || 1);
+    const pageSize = Number(url.searchParams.get('pageSize') || url.searchParams.get('size') || 8);
+    const flows = [
+      {
+        id: 1,
+        flowType: 'EARN',
+        scene: 'DAILY_LOGIN',
+        sceneLabel: '每日登录',
+        pointsChange: 10,
+        frozenChange: 0,
+        beforePoints: db.user.points - 10,
+        afterPoints: db.user.points,
+        beforeFrozenPoints: db.user.frozenPoints,
+        afterFrozenPoints: db.user.frozenPoints,
+        relatedType: 'MANUAL',
+        relatedId: 0,
+        relatedLabel: '系统奖励',
+        description: '同一会员每日首次登录奖励一次',
+        balanceText: `当前 ${db.user.points} 分，冻结 ${db.user.frozenPoints} 分`,
+        createTime: new Date().toISOString().slice(0, 10),
+      },
+    ];
+    return HttpResponse.json(paginate(flows, page, pageSize));
+  }),
+
   http.get('/api/resources', ({ request }) => {
     const params = paramsFromUrl(request);
     return HttpResponse.json(paginate(filterResources(db.resources, params), params.page, params.pageSize));

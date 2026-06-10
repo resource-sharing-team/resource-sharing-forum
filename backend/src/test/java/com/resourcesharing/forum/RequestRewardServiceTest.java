@@ -6,6 +6,7 @@ import com.resourcesharing.forum.service.FileService;
 import com.resourcesharing.forum.service.interaction.CommentTreeService;
 import com.resourcesharing.forum.service.request.RequestRewardService;
 import com.resourcesharing.forum.service.point.PointManager;
+import com.resourcesharing.forum.service.point.PointRuleService;
 import com.resourcesharing.forum.service.support.ContentModerationService;
 import com.resourcesharing.forum.service.support.ForumLookupService;
 import com.resourcesharing.forum.service.support.MappingSupport;
@@ -268,7 +269,7 @@ class RequestRewardServiceTest {
         CommentTreeService commentTreeService = new CommentTreeService(txSupport, mappings);
         FileService fileService = new FileService(provider(jdbc), "./uploads", "pdf,doc,docx,ppt,pptx,xls,xlsx,zip,rar,7z,png,jpg,jpeg,txt,md", 100);
         return new RequestRewardService(txSupport, values, mappings, lookup, pointManager, adminLogService, null,
-                contentModerationService, commentTreeService, fileService);
+                contentModerationService, commentTreeService, fileService, new PointRuleService(txSupport, values));
     }
 
     private static ContentModerationService moderationRejecting(String token) {
@@ -305,10 +306,16 @@ class RequestRewardServiceTest {
             if (sql.contains("FROM member_profile mp")) {
                 return requiredType.cast(5L);
             }
+            if (sql.contains("daily_request_publish_limit")) {
+                return requiredType.cast(5);
+            }
             if (sql.contains("FROM resource_info")) {
                 return requiredType.cast(0);
             }
-            if (sql.contains("COUNT(*) FROM request_post")) {
+            if (sql.contains("COUNT(*)") && sql.contains("FROM request_post")) {
+                if (requiredType == Integer.class) {
+                    return requiredType.cast(0);
+                }
                 return requiredType.cast(0L);
             }
             if (sql.contains("FROM system_config")) {
@@ -396,6 +403,24 @@ class RequestRewardServiceTest {
 
         @Override
         public void transferReward(Long requestId, Long winnerMemberId) {
+        }
+
+        @Override
+        public void collectFrozenRequest(Long requestId, Long operatorId, String description) {
+        }
+
+        @Override
+        public void restoreCollectedRequest(Long requestId, Long operatorId, String description) {
+        }
+
+        @Override
+        public boolean earn(Long memberId, Integer points, String scene, String relatedType, Long relatedId, Long operatorId, String description, String bizKey) {
+            return false;
+        }
+
+        @Override
+        public boolean deduct(Long memberId, Integer points, String scene, String relatedType, Long relatedId, Long operatorId, String description, String bizKey) {
+            return false;
         }
 
         @Override

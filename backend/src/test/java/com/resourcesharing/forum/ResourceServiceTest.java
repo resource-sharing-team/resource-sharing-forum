@@ -4,6 +4,8 @@ import com.resourcesharing.forum.common.BusinessException;
 import com.resourcesharing.forum.common.ErrorCode;
 import com.resourcesharing.forum.service.interaction.CommentTreeService;
 import com.resourcesharing.forum.service.notification.NotificationDispatcher;
+import com.resourcesharing.forum.service.point.PointManager;
+import com.resourcesharing.forum.service.point.PointRuleService;
 import com.resourcesharing.forum.service.resource.ResourceQueryService;
 import com.resourcesharing.forum.service.resource.ResourceService;
 import com.resourcesharing.forum.service.support.ContentModerationService;
@@ -125,7 +127,8 @@ class ResourceServiceTest {
         CommentTreeService commentTreeService = new CommentTreeService(txSupport, mappings);
         ResourceQueryService queryService = new ResourceQueryService(txSupport, values, mappings, commentTreeService);
         AdminLogService adminLogService = new AdminLogService(txSupport, values);
-        return new ResourceService(txSupport, values, lookup, queryService, adminLogService, null, contentModerationService);
+        return new ResourceService(txSupport, values, lookup, queryService, adminLogService, null, contentModerationService,
+                null, new PointRuleService(txSupport, values));
     }
 
     private static ContentModerationService moderationRejecting(String token) {

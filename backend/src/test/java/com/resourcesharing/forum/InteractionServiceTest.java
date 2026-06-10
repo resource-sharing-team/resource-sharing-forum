@@ -3,6 +3,8 @@ package com.resourcesharing.forum;
 import com.resourcesharing.forum.common.BusinessException;
 import com.resourcesharing.forum.common.ErrorCode;
 import com.resourcesharing.forum.service.interaction.InteractionService;
+import com.resourcesharing.forum.service.point.PointManager;
+import com.resourcesharing.forum.service.point.PointRuleService;
 import com.resourcesharing.forum.service.support.ContentModerationService;
 import com.resourcesharing.forum.service.support.ForumLookupService;
 import com.resourcesharing.forum.service.support.MappingSupport;
@@ -139,27 +141,82 @@ class InteractionServiceTest {
         assertThat(jdbc.updateSql()).isEmpty();
     }
 
+    @Test
+    void firstFavoriteRewardsResourcePublisher() {
+        CapturingJdbcTemplate jdbc = new CapturingJdbcTemplate();
+        jdbc.publisherId = 88L;
+        RecordingPointManager points = new RecordingPointManager();
+        InteractionService service = interactionRewardService(jdbc, points);
+
+        service.toggleResourceInteraction(42L, "favorite", 7L);
+
+        assertThat(points.earned()).singleElement().satisfies(event -> {
+            assertThat(event.memberId()).isEqualTo(88L);
+            assertThat(event.points()).isEqualTo(5);
+            assertThat(event.scene()).isEqualTo("RESOURCE_FAVORITED");
+            assertThat(event.bizKey()).isEqualTo("resource-favorite:42:5");
+        });
+    }
+
+    @Test
+    void ownResourceInteractionDoesNotRewardPublisher() {
+        CapturingJdbcTemplate jdbc = new CapturingJdbcTemplate();
+        jdbc.publisherId = 5L;
+        RecordingPointManager points = new RecordingPointManager();
+        InteractionService service = interactionRewardService(jdbc, points);
+
+        service.toggleResourceInteraction(42L, "like", 7L);
+
+        assertThat(points.earned()).isEmpty();
+    }
+
     private static InteractionService service(JdbcTemplate jdbc) {
         return service(jdbc, new ContentModerationService(new TxSupport(provider(null), provider(null))));
     }
 
     private static InteractionService service(JdbcTemplate jdbc, ContentModerationService contentModerationService) {
+        return service(jdbc, contentModerationService, null, null);
+    }
+
+    private static InteractionService interactionRewardService(JdbcTemplate jdbc, PointManager pointManager) {
         TxSupport txSupport = new TxSupport(provider(jdbc), provider(null));
         ValueSupport values = new ValueSupport();
         ForumLookupService lookup = new ForumLookupService(txSupport);
         MappingSupport mappings = new MappingSupport(values, lookup);
-        return new InteractionService(txSupport, values, mappings, lookup, null, null, contentModerationService);
+        ResourceQueryServiceStub resourceQueryService = new ResourceQueryServiceStub(txSupport, values, mappings);
+        return service(jdbc, new ContentModerationService(new TxSupport(provider(null), provider(null))), pointManager, resourceQueryService);
+    }
+
+    private static InteractionService service(
+            JdbcTemplate jdbc,
+            ContentModerationService contentModerationService,
+            PointManager pointManager,
+            com.resourcesharing.forum.service.resource.ResourceQueryService resourceQueryService
+    ) {
+        TxSupport txSupport = new TxSupport(provider(jdbc), provider(null));
+        ValueSupport values = new ValueSupport();
+        ForumLookupService lookup = new ForumLookupService(txSupport);
+        MappingSupport mappings = new MappingSupport(values, lookup);
+        return new InteractionService(txSupport, values, mappings, lookup, resourceQueryService, null, contentModerationService,
+                pointManager, new PointRuleService(txSupport, values));
     }
 
     private static final class CapturingJdbcTemplate extends JdbcTemplate {
         private final List<Call> calls = new ArrayList<>();
         private final List<String> updates = new ArrayList<>();
+        private Long publisherId = 5L;
 
         @Override
         public <T> T queryForObject(String sql, Class<T> requiredType, Object... args) {
             calls.add(new Call(sql, args));
             if (sql.contains("FROM member_profile mp")) {
                 return requiredType.cast(5L);
+            }
+            if (sql.contains("SELECT publisher_id") && sql.contains("FROM resource_info") && sql.contains("FOR UPDATE")) {
+                return requiredType.cast(publisherId);
+            }
+            if (sql.contains("SELECT status = 'ACTIVE'")) {
+                return requiredType.cast(Boolean.TRUE);
             }
             if (sql.contains("FROM comment_info") && sql.contains("SELECT COUNT(*)")) {
                 return requiredType.cast(0);
@@ -205,6 +262,64 @@ class InteractionServiceTest {
     }
 
     private record Call(String sql, Object[] args) {
+    }
+
+    private static final class RecordingPointManager implements PointManager {
+        private final List<EarnEvent> earned = new ArrayList<>();
+
+        @Override
+        public void freezeForRequest(Long memberId, Integer points, Long requestId) {
+        }
+
+        @Override
+        public void refundRequest(Long requestId) {
+        }
+
+        @Override
+        public void transferReward(Long requestId, Long winnerMemberId) {
+        }
+
+        @Override
+        public void collectFrozenRequest(Long requestId, Long operatorId, String description) {
+        }
+
+        @Override
+        public void restoreCollectedRequest(Long requestId, Long operatorId, String description) {
+        }
+
+        @Override
+        public boolean earn(Long memberId, Integer points, String scene, String relatedType, Long relatedId, Long operatorId, String description, String bizKey) {
+            earned.add(new EarnEvent(memberId, points, scene, bizKey));
+            return true;
+        }
+
+        @Override
+        public boolean deduct(Long memberId, Integer points, String scene, String relatedType, Long relatedId, Long operatorId, String description, String bizKey) {
+            return true;
+        }
+
+        @Override
+        public Long recordEvent(Long memberId, String type, Integer amount, Integer afterBalance, String scene, Long relatedTargetId, String remark) {
+            return 0L;
+        }
+
+        private List<EarnEvent> earned() {
+            return earned;
+        }
+    }
+
+    private record EarnEvent(Long memberId, Integer points, String scene, String bizKey) {
+    }
+
+    private static final class ResourceQueryServiceStub extends com.resourcesharing.forum.service.resource.ResourceQueryService {
+        ResourceQueryServiceStub(TxSupport txSupport, ValueSupport values, MappingSupport mappings) {
+            super(txSupport, values, mappings, new com.resourcesharing.forum.service.interaction.CommentTreeService(txSupport, mappings));
+        }
+
+        @Override
+        public Map<String, Object> resource(Long resourceId, Long accountId) {
+            return Map.of("id", resourceId);
+        }
     }
 
     private static <T> ObjectProvider<T> provider(T value) {

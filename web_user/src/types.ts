@@ -19,7 +19,91 @@ export type User = {
   availablePoints: number;
   rewardLimit: number;
   expNeeded: number;
+  upgradeProgress?: number;
+  progressPercent?: number;
+  levelCode?: string;
+  levelInfo?: MemberLevelInfo;
+  levelMinPoints?: number;
+  levelMaxPoints?: number | null;
+  nextLevel?: string;
+  nextLevelMinPoints?: number;
+  dailyDownloadLimit?: number;
+  dailyResourcePublishLimit?: number;
+  dailyRequestPublishLimit?: number;
+  maxFilesPerResource?: number;
+  maxFileSizeMb?: number;
+  canApplyTop?: boolean;
+  benefits?: MemberBenefit[];
+  pointRules?: PointRule[];
+  rules?: PointRule[];
   passwordUpdatedAt: string;
+};
+
+export type MemberLevelInfo = {
+  code?: string;
+  name?: string;
+  minPoints?: number;
+  maxPoints?: number | null;
+};
+
+export type MemberBenefit = {
+  name: string;
+  description?: string;
+  limit: string | number | boolean;
+  enabled?: boolean;
+};
+
+export type PointRule = {
+  key?: string;
+  action: string;
+  points: string;
+  note: string;
+};
+
+export type PointAccount = Pick<
+  User,
+  | 'points'
+  | 'frozenPoints'
+  | 'availablePoints'
+  | 'level'
+  | 'rewardLimit'
+  | 'expNeeded'
+  | 'upgradeProgress'
+  | 'progressPercent'
+  | 'levelCode'
+  | 'levelInfo'
+  | 'levelMinPoints'
+  | 'levelMaxPoints'
+  | 'nextLevel'
+  | 'nextLevelMinPoints'
+  | 'dailyDownloadLimit'
+  | 'dailyResourcePublishLimit'
+  | 'dailyRequestPublishLimit'
+  | 'maxFilesPerResource'
+  | 'maxFileSizeMb'
+  | 'canApplyTop'
+  | 'benefits'
+  | 'pointRules'
+  | 'rules'
+>;
+
+export type PointFlow = {
+  id: number;
+  flowType: string;
+  scene: string;
+  sceneLabel?: string;
+  pointsChange: number;
+  frozenChange: number;
+  beforePoints: number;
+  afterPoints: number;
+  beforeFrozenPoints: number;
+  afterFrozenPoints: number;
+  relatedType?: string;
+  relatedId?: number;
+  relatedLabel?: string;
+  description?: string;
+  balanceText?: string;
+  createTime: string;
 };
 
 export type ResourceAttachment = {

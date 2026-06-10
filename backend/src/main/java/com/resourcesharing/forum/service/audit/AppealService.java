@@ -2,7 +2,9 @@ package com.resourcesharing.forum.service.audit;
 
 import com.resourcesharing.forum.common.BusinessException;
 import com.resourcesharing.forum.common.ErrorCode;
+import com.resourcesharing.forum.domain.statemachine.RequestStateMachine;
 import com.resourcesharing.forum.service.notification.NotificationDispatcher;
+import com.resourcesharing.forum.service.point.PointManager;
 import com.resourcesharing.forum.service.resource.ResourceService;
 import com.resourcesharing.forum.service.support.ForumLookupService;
 import com.resourcesharing.forum.service.support.TxSupport;
@@ -27,6 +29,7 @@ public class AppealService {
     private final AdminLogService adminLogService;
     private final NotificationDispatcher notificationDispatcher;
     private final ResourceService resourceService;
+    private final PointManager pointManager;
 
     public AppealService(
             TxSupport txSupport,
@@ -34,7 +37,8 @@ public class AppealService {
             ForumLookupService lookup,
             AdminLogService adminLogService,
             NotificationDispatcher notificationDispatcher,
-            ResourceService resourceService
+            ResourceService resourceService,
+            PointManager pointManager
     ) {
         this.txSupport = txSupport;
         this.values = values;
@@ -42,6 +46,7 @@ public class AppealService {
         this.adminLogService = adminLogService;
         this.notificationDispatcher = notificationDispatcher;
         this.resourceService = resourceService;
+        this.pointManager = pointManager;
     }
 
     public Map<String, Object> appeal(Long accountId, Map<String, Object> request) {
@@ -97,6 +102,9 @@ public class AppealService {
                         Map.of("reason", handleResult)
                 );
             }
+            if ("APPROVED".equals(status) && "REQUEST_POST".equals(appeal.get("targetType"))) {
+                restoreRequestPost(jdbc, values.number(appeal.get("targetId"), appealId), adminAccountId, handleResult);
+            }
             adminLogService.record(adminId, "APPEAL_HANDLE", "APPEAL", appealId, before, status);
             notificationDispatcher.dispatchToMember(
                     values.number(appeal.get("appellantId"), 0L),
@@ -126,6 +134,29 @@ public class AppealService {
         } catch (DataAccessException exception) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "Appeal does not exist");
         }
+    }
+
+    private void restoreRequestPost(JdbcTemplate jdbc, Long requestId, Long adminAccountId, String reason) {
+        Map<String, Object> post = jdbc.queryForObject("""
+                SELECT status, reward_points, reward_status
+                FROM request_post
+                WHERE id = ? AND deleted_at IS NULL
+                FOR UPDATE
+                """, (rs, rowNum) -> values.map(
+                "status", rs.getString("status"),
+                "rewardPoints", rs.getInt("reward_points"),
+                "rewardStatus", rs.getString("reward_status")
+        ), requestId);
+        String before = String.valueOf(post.get("status"));
+        RequestStateMachine.assertCanTransit(before, "ONGOING", "RESTORE", "ADMIN", false, reason);
+        if (values.number(post.get("rewardPoints"), 0L) > 0 && "COLLECTED".equals(post.get("rewardStatus"))) {
+            pointManager.restoreCollectedRequest(requestId, adminAccountId, reason);
+        }
+        jdbc.update("UPDATE request_post SET status = 'ONGOING', closed_time = NULL WHERE id = ?", requestId);
+        jdbc.update("""
+                INSERT INTO request_status_log(request_id, from_status, to_status, operator_id, reason)
+                VALUES (?, ?, 'ONGOING', ?, ?)
+                """, requestId, before, adminAccountId, reason);
     }
 
     private String appealTarget(String target) {

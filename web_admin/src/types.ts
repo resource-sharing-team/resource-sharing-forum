@@ -147,6 +147,8 @@ export type MemberLevel = {
   min: string;
   max: string;
   downloads: string;
+  resourcePublishLimit?: string;
+  requestPublishLimit?: string;
   files: string;
   rewardLimit: string;
   canTop: string;

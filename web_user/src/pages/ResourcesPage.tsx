@@ -66,12 +66,20 @@ export default function ResourcesPage() {
                 key={resource.id}
                 resource={resource}
                 onFavorite={async (id) => {
-                  await action.mutateAsync({ id, action: 'favorite' });
-                  message.success('收藏状态已更新');
+                  try {
+                    await action.mutateAsync({ id, action: 'favorite' });
+                    message.success('收藏状态已更新');
+                  } catch (error) {
+                    message.error(error instanceof Error ? error.message : '收藏失败，请稍后重试');
+                  }
                 }}
                 onLike={async (id) => {
-                  await action.mutateAsync({ id, action: 'like' });
-                  message.success('点赞状态已更新');
+                  try {
+                    await action.mutateAsync({ id, action: 'like' });
+                    message.success('点赞状态已更新');
+                  } catch (error) {
+                    message.error(error instanceof Error ? error.message : '点赞失败，请稍后重试');
+                  }
                 }}
               />
             ))}

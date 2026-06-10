@@ -169,6 +169,8 @@ public class AdminDashboardService {
                         min_points = COALESCE(?, min_points),
                         max_points = ?,
                         daily_download_limit = COALESCE(?, daily_download_limit),
+                        daily_resource_publish_limit = COALESCE(?, daily_resource_publish_limit),
+                        daily_request_publish_limit = COALESCE(?, daily_request_publish_limit),
                         max_files_per_resource = COALESCE(?, max_files_per_resource),
                         reward_limit = COALESCE(?, reward_limit),
                         can_apply_top = COALESCE(?, can_apply_top)
@@ -178,6 +180,8 @@ public class AdminDashboardService {
                     values.firstPresent(request, "min", "minPoints"),
                     nullableNumber(values.firstPresent(request, "max", "maxPoints")),
                     values.firstPresent(request, "downloads", "dailyDownloadLimit"),
+                    values.firstPresent(request, "resourcePublishLimit", "dailyResourcePublishLimit"),
+                    values.firstPresent(request, "requestPublishLimit", "dailyRequestPublishLimit"),
                     values.firstPresent(request, "files", "maxFilesPerResource"),
                     values.firstPresent(request, "rewardLimit"),
                     booleanNumber(values.firstPresent(request, "canTop", "canApplyTop")),
@@ -577,26 +581,32 @@ public class AdminDashboardService {
 
     private List<Map<String, Object>> memberLevels(JdbcTemplate jdbc) {
         return jdbc.query("""
-                SELECT id, level_name, min_points, max_points, daily_download_limit, max_files_per_resource, reward_limit, can_apply_top, status
+                SELECT id, level_name, min_points, max_points, daily_download_limit,
+                       daily_resource_publish_limit, daily_request_publish_limit,
+                       max_files_per_resource, reward_limit, can_apply_top, status
                 FROM membership_level
                 WHERE deleted_at IS NULL
                 ORDER BY sort_order ASC, id ASC
                 """, (rs, rowNum) -> memberLevelRow(rs.getLong("id"), rs.getString("level_name"),
                 rs.getLong("min_points"), rs.getObject("max_points"), rs.getLong("daily_download_limit"),
+                rs.getLong("daily_resource_publish_limit"), rs.getLong("daily_request_publish_limit"),
                 rs.getLong("max_files_per_resource"), rs.getLong("reward_limit"), rs.getInt("can_apply_top"), rs.getString("status")));
     }
 
     private Map<String, Object> memberLevel(JdbcTemplate jdbc, Long levelId) {
         return jdbc.queryForObject("""
-                SELECT id, level_name, min_points, max_points, daily_download_limit, max_files_per_resource, reward_limit, can_apply_top, status
+                SELECT id, level_name, min_points, max_points, daily_download_limit,
+                       daily_resource_publish_limit, daily_request_publish_limit,
+                       max_files_per_resource, reward_limit, can_apply_top, status
                 FROM membership_level
                 WHERE id = ? AND deleted_at IS NULL
                 """, (rs, rowNum) -> memberLevelRow(rs.getLong("id"), rs.getString("level_name"),
                 rs.getLong("min_points"), rs.getObject("max_points"), rs.getLong("daily_download_limit"),
+                rs.getLong("daily_resource_publish_limit"), rs.getLong("daily_request_publish_limit"),
                 rs.getLong("max_files_per_resource"), rs.getLong("reward_limit"), rs.getInt("can_apply_top"), rs.getString("status")), levelId);
     }
 
-    private Map<String, Object> memberLevelRow(Long id, String name, Long min, Object max, Long downloads, Long files, Long rewardLimit, int canTop, String status) {
+    private Map<String, Object> memberLevelRow(Long id, String name, Long min, Object max, Long downloads, Long resourcePublishLimit, Long requestPublishLimit, Long files, Long rewardLimit, int canTop, String status) {
         return values.map(
                 "id", String.valueOf(id),
                 "rawId", id,
@@ -604,6 +614,8 @@ public class AdminDashboardService {
                 "min", String.valueOf(min),
                 "max", max == null ? "无上限" : String.valueOf(max),
                 "downloads", String.valueOf(downloads),
+                "resourcePublishLimit", String.valueOf(resourcePublishLimit),
+                "requestPublishLimit", String.valueOf(requestPublishLimit),
                 "files", String.valueOf(files),
                 "rewardLimit", String.valueOf(rewardLimit),
                 "canTop", canTop == 1 ? "是" : "否",
@@ -613,8 +625,8 @@ public class AdminDashboardService {
 
     private List<Map<String, Object>> configItems(JdbcTemplate jdbc, boolean scoreRules) {
         String predicate = scoreRules
-                ? "(config_key LIKE 'score.%' OR config_key LIKE 'point.%')"
-                : "(config_key NOT LIKE 'score.%' AND config_key NOT LIKE 'point.%')";
+                ? "(config_key LIKE 'score.%' OR config_key LIKE 'point.%' OR config_key IN ('resource.daily_publish_limit', 'request.daily_publish_limit'))"
+                : "(config_key NOT LIKE 'score.%' AND config_key NOT LIKE 'point.%' AND config_key NOT IN ('resource.daily_publish_limit', 'request.daily_publish_limit'))";
         List<Map<String, Object>> rows = jdbc.query("""
                 SELECT config_key, config_value, value_type, description
                 FROM system_config
@@ -629,10 +641,20 @@ public class AdminDashboardService {
         if (!rows.isEmpty() || !scoreRules) {
             return rows;
         }
-        return List.of(
-                values.map("key", "point.upload_reward", "label", "上传资源奖励", "value", "10", "valueType", "INTEGER"),
-                values.map("key", "point.request_reward_min", "label", "悬赏最低积分", "value", "10", "valueType", "INTEGER")
+        List<Map<String, Object>> defaultPointRules = List.of(
+                values.map("key", "point.daily_login", "label", "每日登录 + 积分", "value", "10", "valueType", "INTEGER"),
+                values.map("key", "point.resource_favorited", "label", "资源被收藏 + 积分", "value", "5", "valueType", "INTEGER"),
+                values.map("key", "point.resource_liked", "label", "资源被点赞 + 积分", "value", "3", "valueType", "INTEGER"),
+                values.map("key", "point.resource_approved", "label", "资源审核通过 + 积分", "value", "10", "valueType", "INTEGER"),
+                values.map("key", "point.resource_downloaded", "label", "资源被下载 + 积分", "value", "5", "valueType", "INTEGER"),
+                values.map("key", "point.request_accepted", "label", "回答被采纳 + 平台奖励", "value", "10", "valueType", "INTEGER"),
+                values.map("key", "point.violation_penalty", "label", "举报成立通用扣分", "value", "10", "valueType", "INTEGER"),
+                values.map("key", "point.resource_offline_penalty", "label", "资源违规下架扣分", "value", "20", "valueType", "INTEGER"),
+                values.map("key", "point.comment_delete_penalty", "label", "评论违规删除扣分", "value", "5", "valueType", "INTEGER"),
+                values.map("key", "resource.daily_publish_limit", "label", "默认每日资源发布上限", "value", "5", "valueType", "INTEGER"),
+                values.map("key", "request.daily_publish_limit", "label", "默认每日求资源发布上限", "value", "5", "valueType", "INTEGER")
         );
+        return defaultPointRules;
     }
 
     private Object nullableNumber(Object value) {

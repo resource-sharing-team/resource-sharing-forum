@@ -244,7 +244,10 @@ class ApiSmokeTests {
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.points").exists())
-                .andExpect(jsonPath("$.data.frozenPoints").exists());
+                .andExpect(jsonPath("$.data.frozenPoints").exists())
+                .andExpect(jsonPath("$.data.levelInfo").exists())
+                .andExpect(jsonPath("$.data.progressPercent").exists())
+                .andExpect(jsonPath("$.data.rules").isArray());
 
         mockMvc.perform(get("/api/v1/user/points/flows")
                         .param("page", "2")
@@ -252,7 +255,8 @@ class ApiSmokeTests {
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.page").value(2))
-                .andExpect(jsonPath("$.data.size").value(7));
+                .andExpect(jsonPath("$.data.size").value(7))
+                .andExpect(jsonPath("$.data.list").isArray());
 
         mockMvc.perform(get("/api/members/me/points")
                         .param("page", "2")

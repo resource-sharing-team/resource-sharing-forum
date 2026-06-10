@@ -13,6 +13,21 @@ export function useProfileSummary() {
   return useQuery({ queryKey: ['profile-summary'], queryFn: endpoints.getProfileSummary, enabled: Boolean(token), retry: 0 });
 }
 
+export function usePointAccount() {
+  const token = useAuthStore((state) => state.token);
+  return useQuery({ queryKey: ['point-account'], queryFn: endpoints.getPointAccount, enabled: Boolean(token), retry: 0 });
+}
+
+export function usePointFlows(page = 1, pageSize = 8) {
+  const token = useAuthStore((state) => state.token);
+  return useQuery({
+    queryKey: ['point-flows', page, pageSize],
+    queryFn: () => endpoints.getPointFlows(page, pageSize),
+    enabled: Boolean(token),
+    retry: 0,
+  });
+}
+
 export function useUpdateMe() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -55,7 +70,10 @@ export function usePublishResource() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: endpoints.publishResource,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['resources'] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['resources'] });
+      queryClient.invalidateQueries({ queryKey: ['point-account'] });
+    },
   });
 }
 
@@ -68,6 +86,8 @@ export function useResourceAction() {
       queryClient.invalidateQueries({ queryKey: ['resources'] });
       queryClient.invalidateQueries({ queryKey: ['profile-summary'] });
       queryClient.invalidateQueries({ queryKey: ['resource', String(resource.id)] });
+      queryClient.invalidateQueries({ queryKey: ['point-account'] });
+      queryClient.invalidateQueries({ queryKey: ['point-flows'] });
     },
   });
 }
@@ -99,7 +119,12 @@ export function usePublishDemand() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: endpoints.publishDemand,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['demands'] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['demands'] });
+      queryClient.invalidateQueries({ queryKey: ['me'] });
+      queryClient.invalidateQueries({ queryKey: ['point-account'] });
+      queryClient.invalidateQueries({ queryKey: ['point-flows'] });
+    },
   });
 }
 

@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import type { Comment, Demand, ListParams, PagedResult, ProfileSummary, ReportTarget, Resource, User } from '../types';
+import type { Comment, Demand, ListParams, PagedResult, PointAccount, PointFlow, ProfileSummary, ReportTarget, Resource, User } from '../types';
 
 export async function login(values: { account: string; password: string }) {
   const { data } = await apiClient.post<{ token: string; user: User }>('/auth/login', values);
@@ -39,6 +39,16 @@ export async function bindEmail(values: { email: string; code: string }) {
 export async function getProfileSummary() {
   const { data } = await apiClient.get<Partial<ProfileSummary> & { profile?: User }>('/me/summary');
   return normalizeProfileSummary(data);
+}
+
+export async function getPointAccount() {
+  const { data } = await apiClient.get<PointAccount>('/v1/user/points');
+  return normalizePointAccount(data);
+}
+
+export async function getPointFlows(page = 1, pageSize = 8) {
+  const { data } = await apiClient.get<PagedResult<PointFlow>>('/v1/user/points/flows', { params: { page, pageSize } });
+  return normalizePage(data, normalizePointFlow);
 }
 
 export async function getResources(params: ListParams) {
@@ -121,6 +131,48 @@ function normalizeResource(resource: Resource): Resource {
     userRating: Number(resource?.userRating || 0),
     liked: Boolean(resource?.liked),
     favorited: Boolean(resource?.favorited),
+  };
+}
+
+function normalizePointAccount(account: PointAccount): PointAccount {
+  const points = Number(account?.points || 0);
+  const frozenPoints = Number(account?.frozenPoints || 0);
+  const availablePoints = Number(account?.availablePoints ?? Math.max(0, points - frozenPoints));
+  const progress = Number(account?.progressPercent ?? account?.upgradeProgress ?? 0);
+  const rules = account?.rules || account?.pointRules || [];
+  return {
+    ...account,
+    points,
+    frozenPoints,
+    availablePoints,
+    rewardLimit: Number(account?.rewardLimit || 0),
+    expNeeded: Number(account?.expNeeded || 0),
+    progressPercent: progress,
+    upgradeProgress: progress,
+    benefits: account?.benefits || [],
+    pointRules: rules,
+    rules,
+  };
+}
+
+function normalizePointFlow(flow: PointFlow): PointFlow {
+  return {
+    ...flow,
+    id: Number(flow?.id || 0),
+    flowType: flow?.flowType || '',
+    scene: flow?.scene || '',
+    sceneLabel: flow?.sceneLabel || flow?.scene || flow?.flowType || '积分变动',
+    pointsChange: Number(flow?.pointsChange || 0),
+    frozenChange: Number(flow?.frozenChange || 0),
+    beforePoints: Number(flow?.beforePoints || 0),
+    afterPoints: Number(flow?.afterPoints || 0),
+    beforeFrozenPoints: Number(flow?.beforeFrozenPoints || 0),
+    afterFrozenPoints: Number(flow?.afterFrozenPoints || 0),
+    relatedId: Number(flow?.relatedId || 0),
+    relatedLabel: flow?.relatedLabel || '',
+    description: flow?.description || '',
+    balanceText: flow?.balanceText || `当前 ${Number(flow?.afterPoints || 0)} 分，冻结 ${Number(flow?.afterFrozenPoints || 0)} 分`,
+    createTime: flow?.createTime || '',
   };
 }
 

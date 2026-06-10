@@ -18,6 +18,7 @@ import {
   Form,
   Input,
   List,
+  Pagination,
   Progress,
   Row,
   Space,
@@ -28,26 +29,9 @@ import {
 } from 'antd';
 import { useState, type ReactNode } from 'react';
 import { Link, Navigate, useLocation } from 'react-router-dom';
-import { useBindEmail, useChangePassword, useMe, useProfileSummary, useUpdateMe } from '../api/hooks';
+import { useBindEmail, useChangePassword, useMe, usePointAccount, usePointFlows, useProfileSummary, useUpdateMe } from '../api/hooks';
 import { useAuthStore } from '../store/auth';
-
-const pointRules = [
-  { action: '每日登录', points: '+5', note: '每日首次登录获得' },
-  { action: '发布资源', points: '+20', note: '审核通过后发放' },
-  { action: '资源被下载', points: '+2', note: '每个用户每日限计 1 次' },
-  { action: '回答被采纳', points: '+30', note: '求资源发布者采纳后发放' },
-  { action: '违规下架', points: '-50', note: '严重违规会冻结发布权限' },
-];
-
-const memberTiers = [
-  { tier: 'Lv.1 新手', range: '0-299', rights: '每日下载 5 次，单资源最多 1 个附件' },
-  { tier: 'Lv.2 分享者', range: '300-799', rights: '每日下载 12 次，可发布求资源' },
-  { tier: 'Lv.3 活跃用户', range: '800-1199', rights: '每日下载 25 次，附件优先解析' },
-  { tier: 'Lv.4 贡献者', range: '1200-1999', rights: '每日下载 50 次，发布资源优先审核' },
-  { tier: 'Lv.5 共建者', range: '2000+', rights: '每日下载 100 次，专属标识与批量下载' },
-];
-
-const currentBenefits = ['每日下载 50 次', '发布资源优先审核', '单资源最多上传 5 个附件', '可参与资源评分与举报优先处理'];
+import type { User } from '../types';
 
 export default function ProfilePage() {
   const location = useLocation();
@@ -69,7 +53,7 @@ export default function ProfilePage() {
   const summary = summaryQuery.data;
   const unreadCount = summary?.messages.filter((item) => item.unread).length || 0;
   const expNeeded = Math.max(1, Number(user.expNeeded || 1));
-  const expPercent = Math.min(100, Math.round((Number(user.points || 0) / expNeeded) * 100));
+  const expPercent = Number(user.progressPercent ?? user.upgradeProgress ?? Math.min(100, Math.round((Number(user.points || 0) / expNeeded) * 100)));
 
   const profileSections: Array<{ key: string; label: ReactNode; children: ReactNode }> = [
     {
@@ -175,7 +159,7 @@ export default function ProfilePage() {
           <TrophyOutlined /> 会员中心
         </span>
       ),
-      children: <MemberCenter points={user.points} level={user.level} expNeeded={user.expNeeded} />,
+      children: <MemberCenter user={user} />,
     },
     {
       key: 'message',
@@ -277,21 +261,44 @@ export default function ProfilePage() {
   );
 }
 
-function MemberCenter({ points, level, expNeeded }: { points: number; level: string; expNeeded: number }) {
+function MemberCenter({ user }: { user: User }) {
+  const [flowPage, setFlowPage] = useState(1);
+  const flowSize = 8;
+  const pointAccountQuery = usePointAccount();
+  const pointFlowsQuery = usePointFlows(flowPage, flowSize);
+  const account = pointAccountQuery.data || user;
+  const points = Number(account.points || 0);
+  const frozenPoints = Number(account.frozenPoints || 0);
+  const availablePoints = Number(account.availablePoints ?? Math.max(0, points - frozenPoints));
+  const expNeeded = Number(account.expNeeded || 0);
+  const level = account.level || 'Member';
+  const nextLevel = account.nextLevel || '';
+  const progress = Number(account.progressPercent ?? account.upgradeProgress ?? (expNeeded > 0 ? Math.min(100, Math.round((points / (points + expNeeded)) * 100)) : 100));
+  const rules = account.rules || account.pointRules || [];
+  const benefits = account.benefits || [];
+  const flows = pointFlowsQuery.data?.items || [];
+  const flowTotal = Number(pointFlowsQuery.data?.total || 0);
+
   return (
     <Space direction="vertical" size={18} style={{ width: '100%' }}>
       <section className="member-hero">
         <div>
           <p className="section-kicker">MEMBERSHIP</p>
           <Typography.Title level={3} style={{ marginTop: 0 }}>当前等级：{level}</Typography.Title>
+          <Progress percent={progress} strokeColor="#2e7d32" trailColor="#eee" />
           <Typography.Paragraph type="secondary">
-            当前积分 {points}，下一等级需要 {expNeeded} 分。积分用于衡量贡献，不直接作为现金价值。
+            当前积分 {points}，冻结积分 {frozenPoints}，可用积分 {availablePoints}。
+            {nextLevel ? ` 距离 ${nextLevel} 还需 ${expNeeded} 分。` : ' 已达到当前最高等级。'}
           </Typography.Paragraph>
         </div>
         <div className="current-benefits">
-          {currentBenefits.map((benefit) => (
-            <Tag color="green" key={benefit}>{benefit}</Tag>
-          ))}
+          {benefits.length > 0
+            ? benefits.map((benefit) => (
+              <Tag color="green" key={`${benefit.name}-${String(benefit.limit)}`}>
+                {benefit.name}: {String(benefit.limit)}
+              </Tag>
+            ))
+            : <Tag color="default">暂无权益配置</Tag>}
         </div>
       </section>
 
@@ -299,7 +306,8 @@ function MemberCenter({ points, level, expNeeded }: { points: number; level: str
         <Col xs={24} lg={10}>
           <Card title="积分规则" className="rule-card">
             <List
-              dataSource={pointRules}
+              dataSource={rules}
+              locale={{ emptyText: '暂无积分规则配置' }}
               renderItem={(item) => (
                 <List.Item>
                   <List.Item.Meta title={<Space><Tag color={item.points.startsWith('+') ? 'green' : 'red'}>{item.points}</Tag>{item.action}</Space>} description={item.note} />
@@ -311,12 +319,13 @@ function MemberCenter({ points, level, expNeeded }: { points: number; level: str
         <Col xs={24} lg={14}>
           <Card title="会员权益规则" className="rule-card">
             <List
-              dataSource={memberTiers}
+              dataSource={benefits}
+              locale={{ emptyText: '暂无会员权益配置' }}
               renderItem={(item) => (
-                <List.Item className={item.tier === level ? 'tier-current' : undefined}>
+                <List.Item>
                   <List.Item.Meta
-                    title={<Space><Tag color={item.tier === level ? 'green' : 'default'}>{item.tier}</Tag><Typography.Text>{item.range} 分</Typography.Text></Space>}
-                    description={item.rights}
+                    title={<Space><Tag color={item.enabled ? 'green' : 'default'}>{item.name}</Tag><Typography.Text>{String(item.limit)}</Typography.Text></Space>}
+                    description={item.description}
                   />
                 </List.Item>
               )}
@@ -324,6 +333,41 @@ function MemberCenter({ points, level, expNeeded }: { points: number; level: str
           </Card>
         </Col>
       </Row>
+
+      <Card title="积分流水" className="rule-card">
+        <List
+          loading={pointFlowsQuery.isLoading}
+          dataSource={flows}
+          locale={{ emptyText: '暂无积分流水' }}
+          renderItem={(item) => {
+            const pointChange = Number(item.pointsChange || 0);
+            const frozenChange = Number(item.frozenChange || 0);
+            const tagColor = pointChange > 0 ? 'green' : pointChange < 0 || frozenChange < 0 ? 'red' : 'blue';
+            const changeText = pointChange !== 0
+              ? `${pointChange > 0 ? '+' : ''}${pointChange}`
+              : `${frozenChange > 0 ? '冻结 +' : '冻结 '}${frozenChange}`;
+            return (
+              <List.Item>
+                <List.Item.Meta
+                  title={<Space><Tag color={tagColor}>{changeText}</Tag>{item.sceneLabel}</Space>}
+                  description={`${item.description || item.relatedLabel || '积分变动'} / ${item.balanceText || ''} / ${item.createTime}`}
+                />
+              </List.Item>
+            );
+          }}
+        />
+        {flowTotal > flowSize && (
+          <Pagination
+            size="small"
+            current={flowPage}
+            pageSize={flowSize}
+            total={flowTotal}
+            showSizeChanger={false}
+            onChange={setFlowPage}
+            style={{ marginTop: 12, textAlign: 'right' }}
+          />
+        )}
+      </Card>
     </Space>
   );
 }

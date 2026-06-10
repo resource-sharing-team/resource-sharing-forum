@@ -1167,6 +1167,8 @@ function ConfigPage({ setNotice }: { setNotice: (message: string) => void }) {
                 <th>积分下限</th>
                 <th>积分上限</th>
                 <th>每日下载次数</th>
+                <th>每日资源发布</th>
+                <th>每日求资源发布</th>
                 <th>单资源最大附件数</th>
                 <th>悬赏积分上限</th>
                 <th>资源置顶资格</th>
@@ -1179,12 +1181,14 @@ function ConfigPage({ setNotice }: { setNotice: (message: string) => void }) {
                   <td><input className="edit-input" value={level.min} onChange={(event) => updateLevel(setConfig, index, 'min', event.target.value)} /></td>
                   <td><input className="edit-input" value={level.max} onChange={(event) => updateLevel(setConfig, index, 'max', event.target.value)} /></td>
                   <td><input className="edit-input" value={level.downloads} onChange={(event) => updateLevel(setConfig, index, 'downloads', event.target.value)} /></td>
+                  <td><input className="edit-input" value={level.resourcePublishLimit || ''} onChange={(event) => updateLevel(setConfig, index, 'resourcePublishLimit', event.target.value)} /></td>
+                  <td><input className="edit-input" value={level.requestPublishLimit || ''} onChange={(event) => updateLevel(setConfig, index, 'requestPublishLimit', event.target.value)} /></td>
                   <td><input className="edit-input" value={level.files} onChange={(event) => updateLevel(setConfig, index, 'files', event.target.value)} /></td>
                   <td><input className="edit-input" value={level.rewardLimit} onChange={(event) => updateLevel(setConfig, index, 'rewardLimit', event.target.value)} /></td>
                   <td><input className="edit-input" value={level.canTop} onChange={(event) => updateLevel(setConfig, index, 'canTop', event.target.value)} /></td>
                 </tr>
               ))}
-              <EmptyRow colSpan={7} show={config.memberLevels.length === 0} />
+              <EmptyRow colSpan={9} show={config.memberLevels.length === 0} />
             </tbody>
           </table>
         </TableWrap>

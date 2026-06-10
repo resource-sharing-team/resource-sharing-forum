@@ -9,6 +9,7 @@ import com.resourcesharing.forum.service.FileService;
 import com.resourcesharing.forum.service.interaction.CommentTreeService;
 import com.resourcesharing.forum.service.notification.NotificationDispatcher;
 import com.resourcesharing.forum.service.point.PointManager;
+import com.resourcesharing.forum.service.point.PointRuleService;
 import com.resourcesharing.forum.service.support.ContentModerationService;
 import com.resourcesharing.forum.service.support.ForumLookupService;
 import com.resourcesharing.forum.service.support.MappingSupport;
@@ -41,6 +42,7 @@ public class RequestRewardService {
     private final ContentModerationService contentModerationService;
     private final CommentTreeService commentTreeService;
     private final FileService fileService;
+    private final PointRuleService pointRules;
 
     public RequestRewardService(
             TxSupport txSupport,
@@ -52,7 +54,8 @@ public class RequestRewardService {
             NotificationDispatcher notificationDispatcher,
             ContentModerationService contentModerationService,
             CommentTreeService commentTreeService,
-            FileService fileService
+            FileService fileService,
+            PointRuleService pointRules
     ) {
         this.txSupport = txSupport;
         this.values = values;
@@ -64,6 +67,7 @@ public class RequestRewardService {
         this.contentModerationService = contentModerationService;
         this.commentTreeService = commentTreeService;
         this.fileService = fileService;
+        this.pointRules = pointRules;
     }
 
     public PageResult<Map<String, Object>> listRequests(Map<String, String> params) {
@@ -150,12 +154,13 @@ public class RequestRewardService {
         }
         return txSupport.required(() -> {
             Long memberId = lookup.requireMemberId(accountId);
+            ensureRequestPublishBenefits(jdbc, memberId);
             RewardSelection reward = resolveReward(jdbc, memberId, request);
             KeyHolder keyHolder = new GeneratedKeyHolder();
             jdbc.update(connection -> {
                 PreparedStatement statement = connection.prepareStatement("""
-                        INSERT INTO request_post(requester_id, category_id, title, content, expected_format, reward_points, status, deadline_time)
-                        VALUES (?, ?, ?, ?, ?, ?, 'ONGOING', ?)
+                        INSERT INTO request_post(requester_id, category_id, title, content, expected_format, reward_points, reward_status, status, deadline_time)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 'ONGOING', ?)
                         """, Statement.RETURN_GENERATED_KEYS);
                 statement.setLong(1, memberId);
                 Long categoryId = values.number(values.firstPresent(request, "categoryId", "category2"), 11L);
@@ -168,7 +173,8 @@ public class RequestRewardService {
                 statement.setString(4, content);
                 statement.setString(5, values.firstNonBlank(values.value(request, "expectedFormat", ""), values.value(request, "format", ""), "unlimited"));
                 statement.setInt(6, reward.points());
-                statement.setObject(7, null);
+                statement.setString(7, reward.points() > 0 ? "PENDING" : "NONE");
+                statement.setObject(8, null);
                 return statement;
             }, keyHolder);
             Long requestId = values.key(keyHolder);
@@ -180,6 +186,7 @@ public class RequestRewardService {
                     INSERT INTO request_status_log(request_id, from_status, to_status, operator_id, reason)
                     VALUES (?, NULL, 'ONGOING', ?, 'Request published')
                     """, requestId, accountId);
+            incrementDailyPublishCount(jdbc, memberId);
             return requestPost(requestId);
         });
     }
@@ -265,6 +272,45 @@ public class RequestRewardService {
         } catch (DataAccessException ignored) {
             return 100;
         }
+    }
+
+    private void ensureRequestPublishBenefits(JdbcTemplate jdbc, Long memberId) {
+        int dailyLimit;
+        try {
+            Integer configured = jdbc.queryForObject("""
+                    SELECT COALESCE(ml.daily_request_publish_limit, 0)
+                    FROM member_point_account mpa
+                    LEFT JOIN membership_level ml ON ml.id = mpa.level_id AND ml.deleted_at IS NULL
+                    WHERE mpa.member_id = ? AND mpa.deleted_at IS NULL
+                    """, Integer.class, memberId);
+            dailyLimit = configured == null ? 0 : configured;
+        } catch (DataAccessException ignored) {
+            dailyLimit = 0;
+        }
+        if (dailyLimit <= 0) {
+            dailyLimit = pointRules.requestDailyPublishLimit();
+        }
+        if (dailyLimit <= 0) {
+            return;
+        }
+        Integer publishedToday = jdbc.queryForObject("""
+                SELECT COUNT(*)
+                FROM request_post
+                WHERE requester_id = ?
+                  AND deleted_at IS NULL
+                  AND DATE(created_at) = CURRENT_DATE()
+                """, Integer.class, memberId);
+        if (publishedToday != null && publishedToday >= dailyLimit) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "Daily request publish limit has been reached");
+        }
+    }
+
+    private void incrementDailyPublishCount(JdbcTemplate jdbc, Long memberId) {
+        jdbc.update("""
+                INSERT INTO member_daily_stat(stat_date, member_id, publish_count)
+                VALUES (CURRENT_DATE(), ?, 1)
+                ON DUPLICATE KEY UPDATE publish_count = publish_count + 1
+                """, memberId);
     }
 
     public Map<String, Object> requestDetail(Long requestId, Long accountId) {
@@ -482,6 +528,9 @@ public class RequestRewardService {
             if (reward > 0) {
                 pointManager.transferReward(requestId, values.number(reply.get("replierId"), 0L));
             }
+            pointManager.earn(values.number(reply.get("replierId"), 0L), pointRules.requestAcceptedBonus(),
+                    "REQUEST_ACCEPTED_BONUS", "REQUEST_POST", requestId, memberId,
+                    "Accepted request reply bonus", "request-accepted-bonus:" + requestId);
             jdbc.update("UPDATE request_reply SET is_accepted = 1, accepted_time = NOW(3) WHERE id = ?", replyId);
             jdbc.update("UPDATE request_post SET status = 'RESOLVED', accepted_reply_id = ?, resolved_time = NOW(3) WHERE id = ?", replyId, requestId);
             jdbc.update("""
@@ -508,9 +557,14 @@ public class RequestRewardService {
                     """, (rs, rowNum) -> values.map("requesterId", rs.getLong("requester_id"), "reward", rs.getInt("reward_points"), "status", rs.getString("status")), requestId);
             String before = String.valueOf(post.get("status"));
             String reason = values.firstNonBlank(values.value(request, "reason", ""), "Admin closed request");
+            String rewardDisposition = values.firstNonBlank(values.value(request, "rewardDisposition", ""), values.value(request, "rewardAction", ""), "REFUND").toUpperCase();
             RequestStateMachine.assertCanTransit(before, "CLOSED", "CLOSE", "ADMIN", false, reason);
             if ("ONGOING".equals(before) && values.number(post.get("reward"), 0L) > 0) {
-                pointManager.refundRequest(requestId);
+                if ("COLLECT".equals(rewardDisposition)) {
+                    pointManager.collectFrozenRequest(requestId, adminAccountId, reason);
+                } else {
+                    pointManager.refundRequest(requestId);
+                }
             }
             jdbc.update("UPDATE request_post SET status = 'CLOSED', closed_time = NOW(3) WHERE id = ?", requestId);
             jdbc.update("""
@@ -632,6 +686,7 @@ public class RequestRewardService {
                 "category2", "32",
                 "rewardType", "POINT",
                 "rewardPoints", 50,
+                "rewardStatus", "FROZEN",
                 "points", 50,
                 "replyCount", 0,
                 "commentCount", 0,

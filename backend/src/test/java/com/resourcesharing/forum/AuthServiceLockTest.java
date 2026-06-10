@@ -5,6 +5,8 @@ import com.resourcesharing.forum.security.JwtProperties;
 import com.resourcesharing.forum.security.JwtService;
 import com.resourcesharing.forum.service.identity.AuthService;
 import com.resourcesharing.forum.service.identity.EmailCodeService;
+import com.resourcesharing.forum.service.point.PointManager;
+import com.resourcesharing.forum.service.point.PointRuleService;
 import com.resourcesharing.forum.service.support.MappingSupport;
 import com.resourcesharing.forum.service.support.TxSupport;
 import com.resourcesharing.forum.service.support.ValueSupport;
@@ -42,7 +44,9 @@ class AuthServiceLockTest {
             new JwtService(new JwtProperties("resource-sharing-forum-dev-secret-must-be-changed-2026", 120)),
             new JwtProperties("resource-sharing-forum-dev-secret-must-be-changed-2026", 120),
             passwordEncoder,
-            mock(EmailCodeService.class)
+            mock(EmailCodeService.class),
+            mock(PointManager.class),
+            new PointRuleService(txSupport, new ValueSupport())
     );
 
     @Test

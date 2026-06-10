@@ -63,10 +63,10 @@ export const categories: AdminCategory[] = [
 ];
 
 export const memberLevels: MemberLevel[] = [
-  { name: '普通会员', min: '0', max: '99', downloads: '5', files: '3', rewardLimit: '100', canTop: '否' },
-  { name: '活跃会员', min: '100', max: '499', downloads: '10', files: '5', rewardLimit: '300', canTop: '否' },
-  { name: '优质会员', min: '500', max: '1999', downloads: '20', files: '8', rewardLimit: '800', canTop: '是' },
-  { name: '资深会员', min: '2000', max: '无上限', downloads: '50', files: '10', rewardLimit: '2000', canTop: '是' },
+  { name: '普通会员', min: '0', max: '99', downloads: '5', resourcePublishLimit: '5', requestPublishLimit: '5', files: '3', rewardLimit: '100', canTop: '否' },
+  { name: '活跃会员', min: '100', max: '499', downloads: '10', resourcePublishLimit: '10', requestPublishLimit: '10', files: '5', rewardLimit: '300', canTop: '否' },
+  { name: '优质会员', min: '500', max: '1999', downloads: '20', resourcePublishLimit: '20', requestPublishLimit: '20', files: '8', rewardLimit: '800', canTop: '是' },
+  { name: '资深会员', min: '2000', max: '无上限', downloads: '50', resourcePublishLimit: '50', requestPublishLimit: '50', files: '10', rewardLimit: '2000', canTop: '是' },
 ];
 
 export const logs: AdminLog[] = [

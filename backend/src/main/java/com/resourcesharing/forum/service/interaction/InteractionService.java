@@ -4,6 +4,8 @@ import com.resourcesharing.forum.common.BusinessException;
 import com.resourcesharing.forum.common.ErrorCode;
 import com.resourcesharing.forum.common.PageResult;
 import com.resourcesharing.forum.service.notification.NotificationDispatcher;
+import com.resourcesharing.forum.service.point.PointManager;
+import com.resourcesharing.forum.service.point.PointRuleService;
 import com.resourcesharing.forum.service.resource.ResourceQueryService;
 import com.resourcesharing.forum.service.support.ContentModerationService;
 import com.resourcesharing.forum.service.support.ForumLookupService;
@@ -31,6 +33,8 @@ public class InteractionService {
     private final ResourceQueryService resourceQueryService;
     private final NotificationDispatcher notificationDispatcher;
     private final ContentModerationService contentModerationService;
+    private final PointManager pointManager;
+    private final PointRuleService pointRules;
 
     public InteractionService(
             TxSupport txSupport,
@@ -39,7 +43,9 @@ public class InteractionService {
             ForumLookupService lookup,
             ResourceQueryService resourceQueryService,
             NotificationDispatcher notificationDispatcher,
-            ContentModerationService contentModerationService
+            ContentModerationService contentModerationService,
+            PointManager pointManager,
+            PointRuleService pointRules
     ) {
         this.txSupport = txSupport;
         this.values = values;
@@ -48,6 +54,8 @@ public class InteractionService {
         this.resourceQueryService = resourceQueryService;
         this.notificationDispatcher = notificationDispatcher;
         this.contentModerationService = contentModerationService;
+        this.pointManager = pointManager;
+        this.pointRules = pointRules;
     }
 
     public Map<String, Object> toggleResourceInteraction(Long resourceId, String action, Long accountId) {
@@ -59,6 +67,7 @@ public class InteractionService {
         String actionType = "favorite".equalsIgnoreCase(action) ? "FAVORITE" : "LIKE";
         String column = "FAVORITE".equals(actionType) ? "favorite_count" : "like_count";
         txSupport.required(() -> {
+            Long publisherId = resourcePublisherForUpdate(jdbc, resourceId);
             jdbc.update("""
                     INSERT INTO user_interaction(member_id, target_type, target_id, action_type, status)
                     VALUES (?, 'RESOURCE', ?, ?, 'ACTIVE')
@@ -76,6 +85,18 @@ public class InteractionService {
                     )
                     WHERE r.id = ?
                     """.formatted(column), actionType, resourceId);
+            Boolean active = jdbc.queryForObject("""
+                    SELECT status = 'ACTIVE'
+                    FROM user_interaction
+                    WHERE member_id = ? AND target_type = 'RESOURCE' AND target_id = ? AND action_type = ?
+                    """, Boolean.class, memberId, resourceId, actionType);
+            if (Boolean.TRUE.equals(active) && !Objects.equals(publisherId, memberId)) {
+                int reward = "FAVORITE".equals(actionType) ? pointRules.resourceFavoritedPoints() : pointRules.resourceLikedPoints();
+                String scene = "FAVORITE".equals(actionType) ? "RESOURCE_FAVORITED" : "RESOURCE_LIKED";
+                String key = "resource-" + actionType.toLowerCase() + ":" + resourceId + ":" + memberId;
+                pointManager.earn(publisherId, reward, scene, "RESOURCE", resourceId, memberId,
+                        scene + " reward", key);
+            }
             return null;
         });
         return resourceQueryService.resource(resourceId, accountId);
@@ -357,6 +378,19 @@ public class InteractionService {
                 """, Integer.class, commentId);
         if (count == null || count == 0) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "comment does not exist");
+        }
+    }
+
+    private Long resourcePublisherForUpdate(JdbcTemplate jdbc, Long resourceId) {
+        try {
+            return jdbc.queryForObject("""
+                    SELECT publisher_id
+                    FROM resource_info
+                    WHERE id = ? AND status = 'PUBLISHED' AND deleted_at IS NULL
+                    FOR UPDATE
+                    """, Long.class, resourceId);
+        } catch (DataAccessException ignored) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "resource does not exist");
         }
     }
 

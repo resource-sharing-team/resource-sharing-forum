@@ -27,8 +27,21 @@ export default function ResourceDetailPage() {
   const { resource, comments } = resourceQuery.data;
 
   async function downloadAttachment(attachment: ResourceAttachment) {
-    await action.mutateAsync({ id: resource.id, action: 'download', attachmentId: attachment.id });
-    message.success(`已选择下载：${attachment.name}`);
+    try {
+      await action.mutateAsync({ id: resource.id, action: 'download', attachmentId: attachment.id });
+      message.success(`已选择下载：${attachment.name}`);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '下载失败，请稍后重试');
+    }
+  }
+
+  async function toggleAction(actionName: 'like' | 'favorite') {
+    try {
+      await action.mutateAsync({ id: resource.id, action: actionName });
+      message.success(actionName === 'like' ? '点赞状态已更新' : '收藏状态已更新');
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '操作失败，请稍后重试');
+    }
   }
 
   return (
@@ -70,10 +83,10 @@ export default function ResourceDetailPage() {
           </div>
 
           <div className="action-group">
-            <button type="button" className={resource.liked ? 'text-btn active' : 'text-btn'} onClick={() => action.mutate({ id: resource.id, action: 'like' })}>
+            <button type="button" className={resource.liked ? 'text-btn active' : 'text-btn'} onClick={() => void toggleAction('like')}>
               {resource.liked ? <HeartFilled /> : <HeartOutlined />} {resource.liked ? '已点赞' : '点赞'}
             </button>
-            <button type="button" className={resource.favorited ? 'text-btn active' : 'text-btn'} onClick={() => action.mutate({ id: resource.id, action: 'favorite' })}>
+            <button type="button" className={resource.favorited ? 'text-btn active' : 'text-btn'} onClick={() => void toggleAction('favorite')}>
               {resource.favorited ? <StarFilled /> : <StarOutlined />} {resource.favorited ? '已收藏' : '收藏'}
             </button>
             <span className="action-item">
@@ -83,8 +96,12 @@ export default function ResourceDetailPage() {
                 allowHalf
                 value={resource.userRating || 0}
                 onChange={async (score) => {
-                  await rateResource.mutateAsync({ id: resource.id, score });
-                  message.success(score ? `已评分 ${score} 分` : '已清除评分');
+                  try {
+                    await rateResource.mutateAsync({ id: resource.id, score });
+                    message.success(score ? `已评分 ${score} 分` : '已清除评分');
+                  } catch (error) {
+                    message.error(error instanceof Error ? error.message : '评分失败，请稍后重试');
+                  }
                 }}
               />
             </span>

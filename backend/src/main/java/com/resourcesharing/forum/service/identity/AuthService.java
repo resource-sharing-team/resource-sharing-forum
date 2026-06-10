@@ -4,6 +4,8 @@ import com.resourcesharing.forum.common.BusinessException;
 import com.resourcesharing.forum.common.ErrorCode;
 import com.resourcesharing.forum.security.JwtProperties;
 import com.resourcesharing.forum.security.JwtService;
+import com.resourcesharing.forum.service.point.PointManager;
+import com.resourcesharing.forum.service.point.PointRuleService;
 import com.resourcesharing.forum.service.support.MappingSupport;
 import com.resourcesharing.forum.service.support.TxSupport;
 import com.resourcesharing.forum.service.support.ValueSupport;
@@ -17,6 +19,7 @@ import org.springframework.stereotype.Service;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -35,6 +38,8 @@ public class AuthService {
     private final JwtProperties jwtProperties;
     private final PasswordEncoder passwordEncoder;
     private final EmailCodeService emailCodeService;
+    private final PointManager pointManager;
+    private final PointRuleService pointRules;
 
     public AuthService(
             TxSupport txSupport,
@@ -43,7 +48,9 @@ public class AuthService {
             JwtService jwtService,
             JwtProperties jwtProperties,
             PasswordEncoder passwordEncoder,
-            EmailCodeService emailCodeService
+            EmailCodeService emailCodeService,
+            PointManager pointManager,
+            PointRuleService pointRules
     ) {
         this.txSupport = txSupport;
         this.values = values;
@@ -52,6 +59,8 @@ public class AuthService {
         this.jwtProperties = jwtProperties;
         this.passwordEncoder = passwordEncoder;
         this.emailCodeService = emailCodeService;
+        this.pointManager = pointManager;
+        this.pointRules = pointRules;
     }
 
     public Map<String, Object> login(Map<String, Object> request) {
@@ -126,7 +135,9 @@ public class AuthService {
                         WHERE id = ?
                         """, accountId);
                 recordLogin(jdbc, accountId, account, "SUCCESS", null);
-                return LoginResult.success(tokenResponse(userProfile(jdbc, accountId), roleForToken(String.valueOf(row.get("role")))));
+                Map<String, Object> profile = userProfile(jdbc, accountId);
+                profile = rewardDailyLogin(jdbc, accountId, profile);
+                return LoginResult.success(tokenResponse(profile, roleForToken(String.valueOf(row.get("role")))));
             } catch (DataAccessException exception) {
                 return LoginResult.failure("account or password is incorrect");
             }
@@ -282,20 +293,84 @@ public class AuthService {
 
     private Map<String, Object> userProfile(JdbcTemplate jdbc, Long accountId) {
         try {
-            return jdbc.queryForObject("""
+            Map<String, Object> profile = jdbc.queryForObject("""
                     SELECT ua.id, ua.username, ua.email, ua.role, ua.password_changed_time,
                            mp.id AS member_id, mp.nickname, mp.avatar_url, mp.bio,
-                           ml.level_name, COALESCE(ml.reward_limit, 100) AS reward_limit,
-                           mpa.current_points, mpa.frozen_points
+                           ml.level_code, ml.level_name, COALESCE(ml.reward_limit, 100) AS reward_limit,
+                           COALESCE(ml.min_points, 0) AS level_min_points, ml.max_points AS level_max_points,
+                           COALESCE(ml.daily_download_limit, 0) AS daily_download_limit,
+                           COALESCE(ml.daily_resource_publish_limit, 0) AS daily_resource_publish_limit,
+                           COALESCE(ml.daily_request_publish_limit, 0) AS daily_request_publish_limit,
+                           COALESCE(ml.max_files_per_resource, 0) AS max_files_per_resource,
+                           COALESCE(ml.max_file_size_mb, 0) AS max_file_size_mb,
+                           COALESCE(ml.can_apply_top, 0) AS can_apply_top,
+                           mpa.current_points, mpa.frozen_points,
+                           (SELECT next_ml.level_name
+                            FROM membership_level next_ml
+                            WHERE next_ml.status = 'ENABLED'
+                              AND next_ml.deleted_at IS NULL
+                              AND next_ml.min_points > COALESCE(mpa.current_points, 0)
+                            ORDER BY next_ml.min_points ASC, next_ml.id ASC
+                            LIMIT 1) AS next_level_name,
+                           (SELECT next_ml.min_points
+                            FROM membership_level next_ml
+                            WHERE next_ml.status = 'ENABLED'
+                              AND next_ml.deleted_at IS NULL
+                              AND next_ml.min_points > COALESCE(mpa.current_points, 0)
+                            ORDER BY next_ml.min_points ASC, next_ml.id ASC
+                            LIMIT 1) AS next_level_min_points
                     FROM user_account ua
                     LEFT JOIN member_profile mp ON mp.account_id = ua.id AND mp.deleted_at IS NULL
                     LEFT JOIN member_point_account mpa ON mpa.member_id = mp.id AND mpa.deleted_at IS NULL
                     LEFT JOIN membership_level ml ON ml.id = mpa.level_id
                     WHERE ua.id = ?
                     """, mappings.userMapper(), accountId);
+            appendPointRules(profile);
+            return profile;
         } catch (DataAccessException ignored) {
-            return defaultUser(accountId);
+            Map<String, Object> profile = defaultUser(accountId);
+            appendPointRules(profile);
+            return profile;
         }
+    }
+
+    private void appendPointRules(Map<String, Object> profile) {
+        if (profile == null) {
+            return;
+        }
+        List<Map<String, Object>> rules = pointRules.rules();
+        profile.put("pointRules", rules);
+        profile.put("rules", rules);
+        profile.putIfAbsent("progressPercent", profile.getOrDefault("upgradeProgress", 0));
+        profile.putIfAbsent("levelInfo", values.map(
+                "code", profile.getOrDefault("levelCode", "NORMAL"),
+                "name", profile.getOrDefault("level", "Member"),
+                "minPoints", profile.getOrDefault("levelMinPoints", 0),
+                "maxPoints", profile.get("levelMaxPoints")
+        ));
+    }
+
+    private Map<String, Object> rewardDailyLogin(JdbcTemplate jdbc, Long accountId, Map<String, Object> profile) {
+        Long memberId = values.number(profile.get("memberId"), 0L);
+        if (memberId == null || memberId == 0) {
+            return profile;
+        }
+        jdbc.update("""
+                INSERT INTO member_daily_stat(stat_date, member_id, login_count)
+                VALUES (CURRENT_DATE(), ?, 1)
+                ON DUPLICATE KEY UPDATE login_count = login_count + 1
+                """, memberId);
+        boolean earned = pointManager.earn(
+                memberId,
+                pointRules.dailyLoginPoints(),
+                "DAILY_LOGIN",
+                "USER_ACCOUNT",
+                accountId,
+                accountId,
+                "Daily login reward",
+                "daily-login:" + memberId + ":" + LocalDate.now()
+        );
+        return earned ? userProfile(jdbc, accountId) : profile;
     }
 
     private void recordLogin(JdbcTemplate jdbc, Long accountId, String loginAccount, String result, String failReason) {

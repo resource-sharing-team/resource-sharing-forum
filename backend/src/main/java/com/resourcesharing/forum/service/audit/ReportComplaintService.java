@@ -3,6 +3,8 @@ package com.resourcesharing.forum.service.audit;
 import com.resourcesharing.forum.common.BusinessException;
 import com.resourcesharing.forum.common.ErrorCode;
 import com.resourcesharing.forum.service.notification.NotificationDispatcher;
+import com.resourcesharing.forum.service.point.PointManager;
+import com.resourcesharing.forum.service.point.PointRuleService;
 import com.resourcesharing.forum.service.request.RequestRewardService;
 import com.resourcesharing.forum.service.resource.ResourceService;
 import com.resourcesharing.forum.service.support.ForumLookupService;
@@ -32,6 +34,8 @@ public class ReportComplaintService {
     private final ResourceService resourceService;
     private final RequestRewardService requestRewardService;
     private final AdminMemberService adminMemberService;
+    private final PointManager pointManager;
+    private final PointRuleService pointRules;
 
     public ReportComplaintService(
             TxSupport txSupport,
@@ -41,7 +45,9 @@ public class ReportComplaintService {
             NotificationDispatcher notificationDispatcher,
             ResourceService resourceService,
             RequestRewardService requestRewardService,
-            AdminMemberService adminMemberService
+            AdminMemberService adminMemberService,
+            PointManager pointManager,
+            PointRuleService pointRules
     ) {
         this.txSupport = txSupport;
         this.values = values;
@@ -51,6 +57,8 @@ public class ReportComplaintService {
         this.resourceService = resourceService;
         this.requestRewardService = requestRewardService;
         this.adminMemberService = adminMemberService;
+        this.pointManager = pointManager;
+        this.pointRules = pointRules;
     }
 
     public Map<String, Object> report(Long accountId, Map<String, Object> request) {
@@ -102,7 +110,7 @@ public class ReportComplaintService {
                     WHERE id = ? AND deleted_at IS NULL
                     """, status, adminId, handleResult, reportId);
             if ("RESOLVED".equals(status)) {
-                applyReportAction(jdbc, adminAccountId, report, request, handleResult);
+                applyReportAction(jdbc, reportId, adminAccountId, report, request, handleResult);
             }
             adminLogService.record(adminId, "REPORT_HANDLE", "REPORT_COMPLAINT", reportId, before, status);
             notificationDispatcher.dispatchToMember(
@@ -136,27 +144,75 @@ public class ReportComplaintService {
         }
     }
 
-    private void applyReportAction(JdbcTemplate jdbc, Long adminAccountId, Map<String, Object> report, Map<String, Object> request, String reason) {
+    private void applyReportAction(JdbcTemplate jdbc, Long reportId, Long adminAccountId, Map<String, Object> report, Map<String, Object> request, String reason) {
         String targetType = String.valueOf(report.get("targetType"));
         Long targetId = values.number(report.get("targetId"), 0L);
         String requestedAction = values.firstNonBlank(values.value(request, "action", ""), defaultAction(report));
         switch (requestedAction) {
-            case "delete-comment" -> jdbc.update("""
-                    UPDATE comment_info
-                    SET status = 'DELETED', deleted_at = NOW(3)
-                    WHERE id = ?
-                    """, targetId);
+            case "delete-comment" -> {
+                Long offenderId = commentMemberForUpdate(jdbc, targetId);
+                jdbc.update("""
+                        UPDATE comment_info
+                        SET status = 'DELETED', deleted_at = NOW(3)
+                        WHERE id = ?
+                        """, targetId);
+                deductViolation(offenderId, pointRules.commentDeletePenalty(), "COMMENT_DELETE_PENALTY",
+                        "COMMENT", targetId, adminAccountId, reason, "report-comment-delete:" + reportId);
+            }
             case "offline-resource" -> resourceService.transitionResourceByAdmin(targetId, adminAccountId, "OFFLINE", Map.of("reason", reason));
             case "copyright-down-resource" -> resourceService.transitionResourceByAdmin(targetId, adminAccountId, "COPYRIGHT_DOWN", Map.of("reason", reason));
-            case "close-request" -> requestRewardService.closeRequestByAdmin(adminAccountId, targetId, Map.of("reason", reason));
-            case "delete-reply" -> requestRewardService.deleteReplyByAdmin(adminAccountId, targetId);
-            case "disable-user" -> adminMemberService.disableMember(adminAccountId, targetId, Map.of("reason", reason));
+            case "close-request" -> {
+                int reward = requestRewardPoints(jdbc, targetId);
+                requestRewardService.closeRequestByAdmin(adminAccountId, targetId, Map.of("reason", reason, "rewardDisposition", "COLLECT"));
+                if (reward <= 0) {
+                    deductViolation(requestOwner(jdbc, targetId), pointRules.violationPenalty(), "VIOLATION_CONFIRMED",
+                            "REQUEST_POST", targetId, adminAccountId, reason, "report-request-close:" + reportId);
+                }
+            }
+            case "delete-reply" -> {
+                Long offenderId = replyMember(jdbc, targetId);
+                requestRewardService.deleteReplyByAdmin(adminAccountId, targetId);
+                deductViolation(offenderId, pointRules.violationPenalty(), "VIOLATION_CONFIRMED",
+                        "REQUEST_REPLY", targetId, adminAccountId, reason, "report-reply-delete:" + reportId);
+            }
+            case "disable-user" -> {
+                adminMemberService.disableMember(adminAccountId, targetId, Map.of("reason", reason));
+                deductViolation(targetId, pointRules.violationPenalty(), "VIOLATION_CONFIRMED",
+                        "USER", targetId, adminAccountId, reason, "report-user-disable:" + reportId);
+            }
             default -> {
                 if ("COMMENT".equals(targetType)) {
+                    Long offenderId = commentMemberForUpdate(jdbc, targetId);
                     jdbc.update("UPDATE comment_info SET status = 'DELETED', deleted_at = NOW(3) WHERE id = ?", targetId);
+                    deductViolation(offenderId, pointRules.commentDeletePenalty(), "COMMENT_DELETE_PENALTY",
+                            "COMMENT", targetId, adminAccountId, reason, "report-comment-delete:" + reportId);
                 }
             }
         }
+    }
+
+    private void deductViolation(Long memberId, int points, String scene, String relatedType, Long relatedId, Long operatorId, String reason, String bizKey) {
+        if (memberId == null || memberId == 0 || points <= 0) {
+            return;
+        }
+        pointManager.deduct(memberId, points, scene, relatedType, relatedId, operatorId, reason, bizKey);
+    }
+
+    private Long commentMemberForUpdate(JdbcTemplate jdbc, Long commentId) {
+        return jdbc.queryForObject("SELECT member_id FROM comment_info WHERE id = ? FOR UPDATE", Long.class, commentId);
+    }
+
+    private Long replyMember(JdbcTemplate jdbc, Long replyId) {
+        return jdbc.queryForObject("SELECT replier_id FROM request_reply WHERE id = ?", Long.class, replyId);
+    }
+
+    private Long requestOwner(JdbcTemplate jdbc, Long requestId) {
+        return jdbc.queryForObject("SELECT requester_id FROM request_post WHERE id = ?", Long.class, requestId);
+    }
+
+    private int requestRewardPoints(JdbcTemplate jdbc, Long requestId) {
+        Integer reward = jdbc.queryForObject("SELECT reward_points FROM request_post WHERE id = ?", Integer.class, requestId);
+        return reward == null ? 0 : reward;
     }
 
     private String defaultAction(Map<String, Object> report) {

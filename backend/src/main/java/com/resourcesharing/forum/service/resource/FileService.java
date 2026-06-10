@@ -2,6 +2,8 @@ package com.resourcesharing.forum.service.resource;
 
 import com.resourcesharing.forum.common.BusinessException;
 import com.resourcesharing.forum.common.ErrorCode;
+import com.resourcesharing.forum.service.point.PointManager;
+import com.resourcesharing.forum.service.point.PointRuleService;
 import com.resourcesharing.forum.service.support.ForumLookupService;
 import com.resourcesharing.forum.service.support.TxSupport;
 import com.resourcesharing.forum.service.support.ValueSupport;
@@ -23,17 +25,23 @@ public class FileService {
     private final TxSupport txSupport;
     private final ValueSupport values;
     private final ForumLookupService lookup;
+    private final PointManager pointManager;
+    private final PointRuleService pointRules;
     private final Path rootDir;
 
     public FileService(
             TxSupport txSupport,
             ValueSupport values,
             ForumLookupService lookup,
+            PointManager pointManager,
+            PointRuleService pointRules,
             @Value("${forum.upload.root-dir:./uploads}") String rootDir
     ) {
         this.txSupport = txSupport;
         this.values = values;
         this.lookup = lookup;
+        this.pointManager = pointManager;
+        this.pointRules = pointRules;
         this.rootDir = Path.of(rootDir).toAbsolutePath().normalize();
     }
 
@@ -46,7 +54,8 @@ public class FileService {
         return txSupport.required(() -> {
             Long memberId = lookup.requireMemberId(accountId);
             Map<String, Object> attachment = jdbc.queryForObject("""
-                    SELECT fa.id, fa.original_file_name, fa.owner_id AS resource_id, fa.storage_path, r.status
+                    SELECT fa.id, fa.original_file_name, fa.owner_id AS resource_id, fa.storage_path,
+                           r.status, r.publisher_id
                     FROM file_attachment fa
                     JOIN resource_info r ON r.id = fa.owner_id AND fa.owner_type = 'RESOURCE'
                     WHERE fa.id = ? AND fa.status = 'NORMAL' AND fa.deleted_at IS NULL
@@ -55,11 +64,15 @@ public class FileService {
                     "fileName", rs.getString("original_file_name"),
                     "resourceId", rs.getLong("resource_id"),
                     "storagePath", rs.getString("storage_path"),
-                    "status", rs.getString("status")
+                    "status", rs.getString("status"),
+                    "publisherId", rs.getLong("publisher_id")
             ), attachmentId);
             if (!"PUBLISHED".equals(attachment.get("status"))) {
                 throw new BusinessException(ErrorCode.FORBIDDEN, "Resource is not published");
             }
+            Long resourceId = values.number(attachment.get("resourceId"), 0L);
+            Long publisherId = values.number(attachment.get("publisherId"), 0L);
+            ensureDailyDownloadLimit(jdbc, memberId);
             Path path = resolveStoragePath(String.valueOf(attachment.get("storagePath")));
             if (!path.startsWith(rootDir) || !Files.exists(path) || !Files.isRegularFile(path)) {
                 return values.map(
@@ -70,7 +83,6 @@ public class FileService {
                         "message", "附件文件不存在，请联系管理员重新上传"
                 );
             }
-            Long resourceId = values.number(attachment.get("resourceId"), 0L);
             Integer previous = jdbc.queryForObject("""
                     SELECT COUNT(*) FROM download_record
                     WHERE member_id = ? AND resource_id = ? AND status = 'SUCCESS'
@@ -92,7 +104,13 @@ public class FileService {
             jdbc.update("UPDATE file_attachment SET download_count = download_count + 1 WHERE id = ?", attachmentId);
             if (first) {
                 jdbc.update("UPDATE resource_info SET download_count = download_count + 1 WHERE id = ?", resourceId);
+                if (!publisherId.equals(memberId)) {
+                    pointManager.earn(publisherId, pointRules.resourceDownloadedPoints(), "RESOURCE_DOWNLOADED",
+                            "RESOURCE", resourceId, memberId, "Resource downloaded reward",
+                            "resource-download:" + resourceId + ":" + memberId);
+                }
             }
+            incrementDailyDownloadCount(jdbc, memberId);
             return values.map("recordId", values.key(keyHolder), "fileName", attachment.get("fileName"),
                     "downloadable", true, "downloadUrl", "/api/v1/attachments/" + attachmentId + "/stream");
         });
@@ -147,5 +165,36 @@ public class FileService {
             normalized = normalized.substring(rootName.length() + 1);
         }
         return rootDir.resolve(normalized).normalize();
+    }
+
+    private void ensureDailyDownloadLimit(JdbcTemplate jdbc, Long memberId) {
+        Integer limit = jdbc.queryForObject("""
+                SELECT COALESCE(ml.daily_download_limit, 0)
+                FROM member_point_account mpa
+                LEFT JOIN membership_level ml ON ml.id = mpa.level_id AND ml.deleted_at IS NULL
+                WHERE mpa.member_id = ? AND mpa.deleted_at IS NULL
+                """, Integer.class, memberId);
+        if (limit == null || limit <= 0) {
+            return;
+        }
+        Integer downloadedToday = jdbc.queryForObject("""
+                SELECT COUNT(*)
+                FROM download_record
+                WHERE member_id = ?
+                  AND status = 'SUCCESS'
+                  AND deleted_at IS NULL
+                  AND DATE(created_at) = CURRENT_DATE()
+                """, Integer.class, memberId);
+        if (downloadedToday != null && downloadedToday >= limit) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "Daily download limit has been reached");
+        }
+    }
+
+    private void incrementDailyDownloadCount(JdbcTemplate jdbc, Long memberId) {
+        jdbc.update("""
+                INSERT INTO member_daily_stat(stat_date, member_id, download_count)
+                VALUES (CURRENT_DATE(), ?, 1)
+                ON DUPLICATE KEY UPDATE download_count = download_count + 1
+                """, memberId);
     }
 }

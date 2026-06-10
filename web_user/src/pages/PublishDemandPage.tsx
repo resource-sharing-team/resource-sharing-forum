@@ -40,14 +40,18 @@ export default function PublishDemandPage() {
               message.error('悬赏积分不能超过可用积分或会员等级上限');
               return;
             }
-            const demand = await publish.mutateAsync({
-              ...parsed.data,
-              rewardType: parsed.data.rewardType || 'FREE',
-              rewardPoints: requestedPoints,
-              points: requestedPoints,
-            });
-            message.success('求资源已发布');
-            navigate(`/demands/${demand.id}`);
+            try {
+              const demand = await publish.mutateAsync({
+                ...parsed.data,
+                rewardType: parsed.data.rewardType || 'FREE',
+                rewardPoints: requestedPoints,
+                points: requestedPoints,
+              });
+              message.success('求资源已发布');
+              navigate(`/demands/${demand.id}`);
+            } catch (error) {
+              message.error(error instanceof Error ? error.message : '发布失败，请稍后重试');
+            }
           }}
         >
           <Form.Item name="title" label="求资源标题" extra="例：求 2026 教资面试真题、求 Python 实战项目源码" rules={[{ required: true, message: '请输入标题' }]}>
