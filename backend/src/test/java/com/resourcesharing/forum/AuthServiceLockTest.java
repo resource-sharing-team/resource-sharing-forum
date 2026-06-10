@@ -20,6 +20,7 @@ import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.function.Supplier;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -33,8 +34,9 @@ import static org.mockito.Mockito.when;
 class AuthServiceLockTest {
     private final JdbcTemplate jdbc = mock(JdbcTemplate.class);
     private final PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
+    private final InlineTxSupport txSupport = new InlineTxSupport(jdbc);
     private final AuthService authService = new AuthService(
-            new InlineTxSupport(jdbc),
+            txSupport,
             new ValueSupport(),
             mock(MappingSupport.class),
             new JwtService(new JwtProperties("resource-sharing-forum-dev-secret-must-be-changed-2026", 120)),
@@ -68,6 +70,7 @@ class AuthServiceLockTest {
                 eq("LOCKED"),
                 eq("ACCOUNT_LOCKED")
         );
+        assertThat(txSupport.requiredCompleted).isTrue();
     }
 
     @Test
@@ -86,6 +89,7 @@ class AuthServiceLockTest {
                 isNull(),
                 eq(99L)
         );
+        assertThat(txSupport.requiredCompleted).isTrue();
     }
 
     private void stubAccountRow(String account, int failedLoginCount, String status, LocalDateTime lockedUntil) {
@@ -113,6 +117,7 @@ class AuthServiceLockTest {
 
     private static class InlineTxSupport extends TxSupport {
         private final JdbcTemplate jdbc;
+        private boolean requiredCompleted;
 
         InlineTxSupport(JdbcTemplate jdbc) {
             super(provider(jdbc), provider(null));
@@ -126,7 +131,9 @@ class AuthServiceLockTest {
 
         @Override
         public <T> T required(Supplier<T> action) {
-            return action.get();
+            T result = action.get();
+            requiredCompleted = true;
+            return result;
         }
 
         private static <T> ObjectProvider<T> provider(T value) {

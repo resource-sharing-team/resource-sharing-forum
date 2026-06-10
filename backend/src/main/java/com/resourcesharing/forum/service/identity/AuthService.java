@@ -61,7 +61,7 @@ public class AuthService {
         if (jdbc == null) {
             return tokenResponse(defaultUser(DEFAULT_ACCOUNT_ID), "MEMBER");
         }
-        return txSupport.required(() -> {
+        LoginResult result = txSupport.required(() -> {
             try {
                 Map<String, Object> row = jdbc.queryForObject("""
                         SELECT id, username, email, password_hash, role, status, failed_login_count, locked_until
@@ -82,7 +82,7 @@ public class AuthService {
                 String status = String.valueOf(row.get("status"));
                 if ("DISABLED".equals(status) || "DELETED".equals(status)) {
                     recordLogin(jdbc, accountId, account, "FAILED", "ACCOUNT_DISABLED");
-                    throw new BusinessException(ErrorCode.UNAUTHORIZED, "account disabled");
+                    return LoginResult.failure("account disabled");
                 }
                 LocalDateTime lockedUntil = (LocalDateTime) row.get("lockedUntil");
                 int failedLoginCount = (int) values.number(row.get("failedLoginCount"), 0L).longValue();
@@ -100,7 +100,7 @@ public class AuthService {
                 if (isLocked(status, lockedUntil, failedLoginCount, now)) {
                     ensureLockPersisted(jdbc, accountId, lockedUntil);
                     recordLogin(jdbc, accountId, account, "LOCKED", "ACCOUNT_LOCKED");
-                    throw new BusinessException(ErrorCode.UNAUTHORIZED, ACCOUNT_TEMPORARILY_LOCKED);
+                    return LoginResult.failure(ACCOUNT_TEMPORARILY_LOCKED);
                 }
                 String hash = String.valueOf(row.get("passwordHash"));
                 if (!passwordEncoder.matches(password, hash)) {
@@ -116,7 +116,7 @@ public class AuthService {
                     boolean lockedByThisAttempt = nextFailCount >= MAX_FAILED_LOGIN_COUNT;
                     recordLogin(jdbc, accountId, account, lockedByThisAttempt ? "LOCKED" : "FAILED",
                             lockedByThisAttempt ? "ACCOUNT_LOCKED" : "PASSWORD_ERROR");
-                    throw new BusinessException(ErrorCode.UNAUTHORIZED,
+                    return LoginResult.failure(
                             lockedByThisAttempt ? ACCOUNT_TEMPORARILY_LOCKED : "account or password is incorrect");
                 }
                 jdbc.update("""
@@ -126,13 +126,25 @@ public class AuthService {
                         WHERE id = ?
                         """, accountId);
                 recordLogin(jdbc, accountId, account, "SUCCESS", null);
-                return tokenResponse(userProfile(jdbc, accountId), roleForToken(String.valueOf(row.get("role"))));
-            } catch (BusinessException exception) {
-                throw exception;
+                return LoginResult.success(tokenResponse(userProfile(jdbc, accountId), roleForToken(String.valueOf(row.get("role")))));
             } catch (DataAccessException exception) {
-                throw new BusinessException(ErrorCode.UNAUTHORIZED, "account or password is incorrect");
+                return LoginResult.failure("account or password is incorrect");
             }
         });
+        if (!result.success()) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, result.message());
+        }
+        return result.data();
+    }
+
+    private record LoginResult(boolean success, String message, Map<String, Object> data) {
+        private static LoginResult success(Map<String, Object> data) {
+            return new LoginResult(true, "success", data);
+        }
+
+        private static LoginResult failure(String message) {
+            return new LoginResult(false, message, null);
+        }
     }
 
     private boolean isLocked(String status, LocalDateTime lockedUntil, int failedLoginCount, LocalDateTime now) {

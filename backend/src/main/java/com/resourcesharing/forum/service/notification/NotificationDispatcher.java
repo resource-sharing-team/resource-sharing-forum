@@ -42,6 +42,14 @@ public class NotificationDispatcher {
             } catch (RuntimeException ignored) {
                 // Notification failures must not roll back the core business transaction.
             }
+            try {
+                txSupport.requiresNew(() -> {
+                    notificationService.createNoticeFromEvent(null, memberId, type, title, content, targetType, targetId);
+                    return null;
+                });
+            } catch (RuntimeException ignored) {
+                // The fallback notice is best-effort and must not block the caller.
+            }
         }
     }
 }

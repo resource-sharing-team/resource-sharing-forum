@@ -34,10 +34,10 @@ class NotificationDispatcherTest {
     }
 
     @Test
-    void dispatchToMemberMarksExistingPendingEventFailedWhenNoticeCreationFails() {
+    void dispatchToMemberMarksExistingPendingEventFailedAndCreatesFallbackNoticeWhenNoticeCreationFails() {
         List<String> calls = new ArrayList<>();
         RecordingNotificationService notificationService = new RecordingNotificationService(calls);
-        notificationService.failNoticeCreation = true;
+        notificationService.failNextNoticeCreations = 1;
         RecordingNotificationEventService eventService = new RecordingNotificationEventService(calls, 42L);
         NotificationDispatcher dispatcher = new NotificationDispatcher(notificationService, eventService, new InlineTxSupport());
 
@@ -46,12 +46,13 @@ class NotificationDispatcherTest {
         assertThat(calls).containsExactly(
                 "createPending:COMMENT:RESOURCE:7:9:reply:new reply",
                 "createNoticeFromEvent:42:9:COMMENT:reply:new reply:RESOURCE:7",
-                "markFailed:42:insert notice failed"
+                "markFailed:42:insert notice failed",
+                "createNoticeFromEvent:null:9:COMMENT:reply:new reply:RESOURCE:7"
         );
     }
 
     @Test
-    void dispatchToMemberRecordsFailureWhenPendingEventCannotBeCreated() {
+    void dispatchToMemberRecordsFailureAndCreatesFallbackNoticeWhenPendingEventCannotBeCreated() {
         List<String> calls = new ArrayList<>();
         RecordingNotificationService notificationService = new RecordingNotificationService(calls);
         RecordingNotificationEventService eventService = new RecordingNotificationEventService(calls, 42L);
@@ -62,7 +63,8 @@ class NotificationDispatcherTest {
 
         assertThat(calls).containsExactly(
                 "createPending:APPEAL_RESULT:APPEAL:7:9:appeal:appeal result",
-                "recordFailure:APPEAL_RESULT:APPEAL:7:9:appeal:appeal result:insert event failed"
+                "recordFailure:APPEAL_RESULT:APPEAL:7:9:appeal:appeal result:insert event failed",
+                "createNoticeFromEvent:null:9:APPEAL_RESULT:appeal:appeal result:APPEAL:7"
         );
     }
 
@@ -104,7 +106,7 @@ class NotificationDispatcherTest {
 
     private static class RecordingNotificationService extends NotificationService {
         private final List<String> calls;
-        private boolean failNoticeCreation;
+        private int failNextNoticeCreations;
 
         RecordingNotificationService(List<String> calls) {
             super(null, null, null);
@@ -114,7 +116,8 @@ class NotificationDispatcherTest {
         @Override
         public void createNoticeFromEvent(Long eventId, Long receiverMemberId, String type, String title, String content, String targetType, Long targetId) {
             calls.add("createNoticeFromEvent:" + eventId + ":" + receiverMemberId + ":" + type + ":" + title + ":" + content + ":" + targetType + ":" + targetId);
-            if (failNoticeCreation) {
+            if (failNextNoticeCreations > 0) {
+                failNextNoticeCreations--;
                 throw new RuntimeException("insert notice failed");
             }
         }
