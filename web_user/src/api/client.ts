@@ -1,24 +1,26 @@
-import axios from 'axios';
+import axios, { type AxiosError, type AxiosResponse } from 'axios';
 
-type ApiWrapper<T = unknown> = {
-  code: number;
+type ApiEnvelope<T = unknown> = {
+  code?: number;
   message?: string;
-  data: T;
+  data?: T;
   timestamp?: string;
 };
 
-const apiOrigin = normalizeApiOrigin(import.meta.env.VITE_API_BASE_URL);
-const apiPrefix = normalizeApiPrefix(import.meta.env.VITE_API_PREFIX || '/api');
+const rawBaseUrl = trimTrailingSlash(import.meta.env.VITE_API_BASE_URL || '');
+const configuredPrefix = normalizePrefix(import.meta.env.VITE_API_PREFIX || '/api');
+const embeddedPrefix = rawBaseUrl.match(/\/api(?:\/v1)?$/)?.[0];
+
+export const apiPrefix = embeddedPrefix || configuredPrefix;
+export const apiBaseURL = embeddedPrefix ? rawBaseUrl : `${rawBaseUrl}${apiPrefix}`;
+export const apiHostURL = embeddedPrefix ? rawBaseUrl.slice(0, -embeddedPrefix.length) || window.location.origin : rawBaseUrl || window.location.origin;
+export const usesV1Api = /\/api\/v1$/.test(apiPrefix);
+export const profileBasePath = usesV1Api ? '/user/profile' : '/me';
 
 export const apiClient = axios.create({
-  baseURL: apiOrigin ? joinApiBase(apiOrigin, apiPrefix) : apiPrefix,
+  baseURL: apiBaseURL,
   timeout: 10000,
 });
-
-export function normalizeApiPayload<T>(payload: T): unknown {
-  const data = isApiWrapper(payload) ? payload.data : payload;
-  return normalizePagedResult(data);
-}
 
 apiClient.interceptors.request.use((config) => {
   try {
@@ -34,50 +36,86 @@ apiClient.interceptors.request.use((config) => {
 });
 
 apiClient.interceptors.response.use(
-  (response) => {
-    response.data = normalizeApiPayload(response.data);
+  (response: AxiosResponse) => {
+    if (isApiEnvelope(response.data)) {
+      const { code, message, data } = response.data;
+      if (typeof code === 'number' && code >= 400) {
+        return Promise.reject(new Error(formatApiError(response.config, code, undefined, message)));
+      }
+      response.data = data;
+    }
     return response;
   },
-  (error) => {
-    const message = error.response?.data?.message || error.message || '请求失败，请稍后重试';
-    return Promise.reject(new Error(message));
-  },
+  (error) => Promise.reject(new Error(getErrorMessage(error))),
 );
 
-function normalizeApiOrigin(value?: string) {
-  return value?.trim().replace(/\/+$/, '') || '';
+function normalizePrefix(prefix: string) {
+  const normalized = prefix.trim();
+  if (!normalized) return '/api';
+  return `/${normalized.replace(/^\/+|\/+$/g, '')}`;
 }
 
-function normalizeApiPrefix(value: string) {
-  const trimmed = value.trim();
-  if (!trimmed) return '/api';
-  return `/${trimmed.replace(/^\/+|\/+$/g, '')}`;
+function trimTrailingSlash(value: string) {
+  return value.replace(/\/+$/g, '');
 }
 
-function joinApiBase(origin: string, prefix: string) {
-  if (/\/api(?:\/v1)?$/.test(origin)) return origin;
-  return `${origin}${prefix}`;
-}
-
-function isApiWrapper(value: unknown): value is ApiWrapper {
+function isApiEnvelope(value: unknown): value is ApiEnvelope {
   return Boolean(
     value &&
       typeof value === 'object' &&
+      !Array.isArray(value) &&
       'code' in value &&
-      'data' in value &&
-      typeof (value as ApiWrapper).code === 'number',
+      'message' in value &&
+      'data' in value,
   );
 }
 
-function normalizePagedResult(value: unknown) {
-  if (!value || typeof value !== 'object') return value;
-  const record = value as Record<string, unknown>;
-  if (Array.isArray(record.list) && !Array.isArray(record.items)) {
-    return {
-      ...record,
-      items: record.list,
-      pageSize: record.size,
-    };
+export function getErrorMessage(error: AxiosError | Error) {
+  if (axios.isAxiosError(error)) {
+    if (error.code === 'ERR_NETWORK') {
+      return formatApiError(error.config, undefined, undefined, '网络错误，后端无法访问');
+    }
+    const responseData = error.response?.data;
+    const responseMessage = getResponseMessage(responseData) || error.message;
+    return formatApiError(error.config, error.response?.status, error.response?.statusText, responseMessage);
   }
-  return value;
+  return error.message || 'Request failed, please try again later';
+}
+
+function getResponseMessage(responseData: unknown) {
+  if (isApiEnvelope(responseData)) return responseData.message || '';
+  if (responseData && typeof responseData === 'object' && 'message' in responseData) {
+    return String((responseData as { message?: unknown }).message || '');
+  }
+  if (typeof responseData === 'string') return responseData;
+  return '';
+}
+
+function formatApiError(config: { method?: string; url?: string } | undefined, status?: number, statusText?: string, message?: string) {
+  const endpoint = describeEndpoint(config);
+  const statusPart = status ? `（${describeStatus(status, statusText)}）` : '';
+  const messagePart = message ? `：${message}` : '';
+  return `接口请求失败：${endpoint}${statusPart}${messagePart}`;
+}
+
+function describeStatus(status: number, statusText?: string) {
+  const hint: Record<number, string> = {
+    400: '请求参数错误',
+    401: '未登录或权限不足',
+    403: '无权访问',
+    404: '接口不存在',
+    405: '请求方法不支持',
+    500: '后端内部错误',
+    501: '后端未实现',
+  };
+  return [`HTTP ${status}`, statusText, hint[status]].filter(Boolean).join('，');
+}
+
+function describeEndpoint(config?: { method?: string; url?: string }) {
+  const method = (config?.method || 'GET').toUpperCase();
+  let url = config?.url || '';
+  if (url.startsWith('/') && !url.startsWith(`${apiPrefix}/`) && url !== apiPrefix) {
+    url = `${apiPrefix}${url}`;
+  }
+  return `${method} ${url || 'unknown endpoint'}`;
 }

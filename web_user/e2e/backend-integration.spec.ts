@@ -16,7 +16,7 @@ test('loads public resource data from configured backend without MSW', async ({ 
   expect(response.headers()['x-trace-id']).toBeTruthy();
   expect(body.code).toBe(200);
   expect(body.data.list.length).toBeGreaterThan(0);
-  await expect(page.getByText('可用资源')).toBeVisible();
+  await expect(page.locator('.resource-card').first()).toBeVisible();
 });
 
 function apiBaseFromEnvironment() {

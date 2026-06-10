@@ -1,26 +1,34 @@
-import { HeartFilled, HeartOutlined, StarFilled, StarOutlined } from '@ant-design/icons';
-import { Rate } from 'antd';
-import { Link } from 'react-router-dom';
-import { getCategoryName } from '../data/catalog';
-import type { Resource } from '../types';
+import { useNavigate } from 'react-router-dom';
+import type { Category, Resource } from '../types';
+import { formatCategory } from '../utils/format';
 
 type Props = {
   resource: Resource;
   compact?: boolean;
-  onFavorite?: (id: number) => void;
-  onLike?: (id: number) => void;
+  categories?: Category[];
 };
 
-export default function ResourceCard({ resource, compact, onFavorite, onLike }: Props) {
+export default function ResourceCard({ resource, categories = [] }: Props) {
+  const navigate = useNavigate();
+
+  function openDetail() {
+    navigate(`/resources/${resource.id}`);
+  }
+
   return (
-    <article className="resource-card">
-      <Link className="resource-title" to={`/resources/${resource.id}`}>
-        {resource.title}
-      </Link>
+    <div
+      className="resource-card resource-card-clickable"
+      role="link"
+      tabIndex={0}
+      onClick={openDetail}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') openDetail();
+      }}
+    >
+      <div className="resource-title">{resource.title}</div>
       <div className="resource-desc">{resource.description}</div>
       <div className="resource-meta">
-        <span>{getCategoryName(resource.category1, resource.category2)}</span>
-        <span>类型：{resource.type}</span>
+        <span>{formatCategory(resource.category1, resource.category2, categories)}</span>
         <span>发布者：{resource.author}</span>
         <span>下载：{resource.downloads}</span>
         <span>评分：{resource.score.toFixed(1)}</span>
@@ -33,27 +41,6 @@ export default function ResourceCard({ resource, compact, onFavorite, onLike }: 
           </span>
         ))}
       </div>
-      {!compact && (
-        <div className="resource-actions">
-          <button
-            type="button"
-            className={resource.favorited ? 'text-btn active' : 'text-btn'}
-            onClick={() => onFavorite?.(resource.id)}
-          >
-            {resource.favorited ? <StarFilled /> : <StarOutlined />} {resource.favorited ? '已收藏' : '收藏'}
-          </button>
-          <button type="button" className={resource.liked ? 'text-btn active' : 'text-btn'} onClick={() => onLike?.(resource.id)}>
-            {resource.liked ? <HeartFilled /> : <HeartOutlined />} {resource.liked ? '已点赞' : '点赞'}
-          </button>
-          <span className="text-btn">
-            <Rate allowHalf disabled value={resource.score} style={{ fontSize: 13 }} /> {resource.ratingCount} 人
-          </span>
-          <span className="text-btn">{resource.attachments.length} 个附件</span>
-          <Link className="text-btn" to={`/resources/${resource.id}`}>
-            查看详情
-          </Link>
-        </div>
-      )}
-    </article>
+    </div>
   );
 }

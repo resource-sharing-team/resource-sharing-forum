@@ -1,64 +1,64 @@
-import { PlusOutlined } from '@ant-design/icons';
-import { Button, Empty, Pagination, Spin } from 'antd';
-import { useMemo } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
-import { useDemands } from '../api/hooks';
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useCategories, useDemands } from '../api/hooks';
+import { InlineApiError } from '../components/ApiState';
 import DemandCard from '../components/DemandCard';
 import ListingFilter from '../components/ListingFilter';
 import type { ListParams } from '../types';
-import { demandListParamsFromSearch, listParamsToSearchParams } from '../utils/listParams';
 
 export default function DemandsPage() {
   const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const searchKey = searchParams.toString();
-  const params = useMemo(() => demandListParamsFromSearch(searchParams), [searchKey, searchParams]);
-  const updateParams = (next: ListParams | ((prev: ListParams) => ListParams)) => {
-    const resolved = typeof next === 'function' ? next(params) : next;
-    setSearchParams(listParamsToSearchParams(resolved, 'demands'), { replace: true });
-  };
-
+  const [params, setParams] = useState<ListParams>({ page: 1, pageSize: 5, sort: 'latest', status: 'active' });
   const demandsQuery = useDemands(params);
-  const items = demandsQuery.data?.items || [];
+  const categoriesQuery = useCategories();
+  const categories = categoriesQuery.data || [];
+  const items = (demandsQuery.data?.items || []).filter((demand) => demand.status === 'active' || demand.status === 'solved');
+  const total = demandsQuery.data?.total || 0;
+  const totalPages = Math.max(1, Math.ceil(total / (params.pageSize || 5)));
+
+  const goPage = (page: number) => setParams((prev) => ({ ...prev, page }));
 
   return (
-    <>
+    <div className="container">
       <div className="page-header">
-        <h1>求资源</h1>
-        <Button className="publish-btn" type="primary" icon={<PlusOutlined />} onClick={() => navigate('/publish-demand')}>
-          发布求资源
-        </Button>
+        <h2>求资源</h2>
+        <button className="publish-btn" onClick={() => navigate('/publish-demand')}>
+          + 发布求资源
+        </button>
       </div>
 
-      <ListingFilter mode="demands" value={params} onChange={updateParams} />
-
-      <div className="card">
-        <div className="card-body">
-          <div className="sort-bar">
-            <div>共 {demandsQuery.data?.total || 0} 条求资源</div>
-          </div>
-        </div>
-      </div>
+      <ListingFilter mode="demands" value={params} categories={categories} categoriesError={categoriesQuery.error} onChange={setParams} />
 
       <div className="card">
         <div className="card-title">求资源列表</div>
-        <Spin spinning={demandsQuery.isLoading}>
-          <div className="card-body" style={{ padding: 0 }}>
-            {items.map((demand) => (
-              <DemandCard key={demand.id} demand={demand} />
-            ))}
-            {!items.length && !demandsQuery.isLoading && <Empty description="暂无匹配求资源" style={{ padding: '40px 0' }} />}
-          </div>
-        </Spin>
+        <div className="card-body">
+          {items.map((demand) => (
+            <DemandCard demand={demand} categories={categories} key={demand.id} />
+          ))}
+          {demandsQuery.isError && <InlineApiError error={demandsQuery.error} />}
+          {!items.length && <div style={{ padding: 40, textAlign: 'center', color: '#999' }}>{demandsQuery.isLoading ? '加载中...' : '暂无求资源需求'}</div>}
+        </div>
       </div>
 
-      <Pagination
-        className="page-pagination"
-        current={params.page}
-        pageSize={params.pageSize}
-        total={demandsQuery.data?.total || 0}
-        onChange={(page, pageSize) => updateParams((prev) => ({ ...prev, page, pageSize }))}
-      />
-    </>
+      {totalPages > 1 && (
+        <div className="page-bar">
+          {(params.page || 1) > 1 && (
+            <button className="page-item" onClick={() => goPage((params.page || 1) - 1)}>
+              上一页
+            </button>
+          )}
+          {Array.from({ length: totalPages }, (_, index) => index + 1).map((page) => (
+            <button className={`page-item ${page === (params.page || 1) ? 'active' : ''}`} key={page} onClick={() => goPage(page)}>
+              {page}
+            </button>
+          ))}
+          {(params.page || 1) < totalPages && (
+            <button className="page-item" onClick={() => goPage((params.page || 1) + 1)}>
+              下一页
+            </button>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

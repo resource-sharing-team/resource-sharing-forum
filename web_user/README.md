@@ -1,6 +1,6 @@
 # 资源分享论坛用户端
 
-这是资源分享论坛的用户端 Web 项目。开发环境可使用 MSW mock `/api` 接口，也可以通过环境变量切换到已部署的后端服务。
+这是资源分享论坛的用户端 Web 项目。用户端支持两种运行方式：未启动后端时使用 MSW mock 接口完成 UI、页面逻辑和交互演示；启动 Spring Boot 后端后，通过环境变量切换到真实 REST API。
 
 ## 技术栈
 
@@ -12,14 +12,14 @@
 - Axios
 - TanStack Query
 - Zustand
-- MSW，用于本地 mock `/api` 接口
+- MSW，用于本地 mock `/api` / `/api/v1` 接口
 - Vitest，用于单元测试
 - Playwright，用于端到端测试
 
 ## 项目结构
 
 ```text
-web_user/
+user/
 ├── e2e/                  # Playwright 端到端测试
 ├── public/               # 静态资源，包含 MSW worker
 ├── scripts/              # 本地开发和测试辅助脚本
@@ -64,7 +64,7 @@ web_user/
 如果当前在项目根目录，先进入用户端目录：
 
 ```powershell
-cd web_user
+cd user
 ```
 
 安装依赖：
@@ -86,6 +86,52 @@ http://127.0.0.1:5173
 ```
 
 如果 PowerShell 禁止直接运行 `npm`，请使用 `npm.cmd`。
+
+### 连接真实后端
+
+后端默认端口来自仓库 `backend/src/main/resources/application.yml`：
+
+```text
+http://localhost:8080
+```
+
+用户端已按后端契约适配统一响应壳：
+
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {},
+  "timestamp": "..."
+}
+```
+
+在 `user` 目录复制 `.env.example` 并按需调整：
+
+```powershell
+Copy-Item .env.example .env.local
+```
+
+常用配置：
+
+```env
+VITE_API_BASE_URL=http://localhost:8080
+VITE_API_PREFIX=/api
+VITE_ENABLE_MOCKS=false
+```
+
+如果要走后端版本化路由，可改为：
+
+```env
+VITE_API_PREFIX=/api/v1
+```
+
+如果只做 UI，本地不启动后端：
+
+```env
+VITE_API_BASE_URL=
+VITE_ENABLE_MOCKS=true
+```
 
 ## 测试与构建
 
@@ -115,25 +161,15 @@ npm.cmd audit
 
 ## 后端接口说明
 
-开发环境默认使用 MSW mock `/api` 接口；配置真实后端地址后会自动绕过 mock，直接请求后端。
+用户端 API 层位于 `src/api/`。当前已经结合仓库后端接口做了以下适配：
 
-本地 mock：
-
-```dotenv
-VITE_API_BASE_URL=
-VITE_API_PREFIX=/api
-VITE_ENABLE_MOCKS=true
-```
-
-真实后端联调：
-
-```dotenv
-VITE_API_BASE_URL=http://localhost:8080
-VITE_API_PREFIX=/api
-VITE_ENABLE_MOCKS=false
-```
-
-后端必须把前端地址加入 `CORS_ALLOWED_ORIGINS`，例如 `http://localhost:5173,http://127.0.0.1:5173`。
+- Axios 自动携带 `Authorization: Bearer <token>`。
+- Axios 自动拆包后端 `{ code, message, data, timestamp }` 响应。
+- 分页结果从后端 `{ total, list, page, size }` 归一为前端 `{ total, items, page, pageSize }`。
+- 资源接口走 `/resources`，支持列表、详情、发布、收藏、点赞、下载、评分、评论。
+- 求资源页面仍保留前端路由 `/demands`，但真实接口调用后端 `/requests`。
+- `/api` 前缀下个人资料走 `/me`，`/api/v1` 前缀下个人资料走 `/user/profile`。
+- 消息中心读取 `/notifications`，未读状态映射为页面使用的 `unread` 字段。
 
 接口请求封装：
 
@@ -153,7 +189,7 @@ mock 数据：
 src/data/mockRecords.ts
 ```
 
-前端 Axios 层会兼容后端统一响应 `{ code, message, data, timestamp }`，并把分页 `{ total, list, page, size }` 转换为页面使用的 `{ total, items, page, pageSize }`。
+如果后端接口继续演进，优先在 `src/api/endpoints.ts` 和 `src/api/adapters.ts` 维护适配，保持页面组件的调用语义稳定。
 
 ## 说明
 

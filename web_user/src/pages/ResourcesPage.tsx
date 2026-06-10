@@ -1,57 +1,70 @@
-import { PlusOutlined } from '@ant-design/icons';
-import { Button, Empty, Pagination, Spin, message } from 'antd';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { useResourceAction, useResources } from '../api/hooks';
+import { useCategories, useResourceTypes, useResources } from '../api/hooks';
+import { InlineApiError } from '../components/ApiState';
 import ListingFilter from '../components/ListingFilter';
 import ResourceCard from '../components/ResourceCard';
 import type { ListParams } from '../types';
-import { listParamsToSearchParams, resourceListParamsFromSearch } from '../utils/listParams';
+
+const sorts = [
+  { key: 'latest', label: '最新发布' },
+  { key: 'download', label: '下载最多' },
+  { key: 'score', label: '评分最高' },
+];
 
 export default function ResourcesPage() {
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const searchKey = searchParams.toString();
-  const params = useMemo(() => resourceListParamsFromSearch(searchParams), [searchKey, searchParams]);
-  const updateParams = (next: ListParams | ((prev: ListParams) => ListParams)) => {
-    const resolved = typeof next === 'function' ? next(params) : next;
-    setSearchParams(listParamsToSearchParams(resolved, 'resources'), { replace: true });
-  };
-
+  const [params, setParams] = useState<ListParams>({
+    keyword: searchParams.get('keyword') || undefined,
+    cate1: searchParams.get('cate1') || undefined,
+    cate2: searchParams.get('cate2') || undefined,
+    page: 1,
+    pageSize: 10,
+    sort: 'latest',
+  });
   const resourcesQuery = useResources(params);
-  const action = useResourceAction();
-
+  const categoriesQuery = useCategories();
+  const resourceTypesQuery = useResourceTypes();
+  const categories = categoriesQuery.data || [];
   const items = useMemo(() => resourcesQuery.data?.items || [], [resourcesQuery.data?.items]);
+  const total = resourcesQuery.data?.total || 0;
+  const totalPages = Math.max(1, Math.ceil(total / (params.pageSize || 10)));
+
+  const goPage = (page: number) => setParams((prev) => ({ ...prev, page }));
 
   return (
-    <>
+    <div className="container">
       <div className="resource-header">
-        <h1>资源库</h1>
-        <Button className="publish-btn" type="primary" icon={<PlusOutlined />} onClick={() => navigate('/publish-resource')}>
-          发布资源
-        </Button>
+        <h2>资源库</h2>
+        <button className="publish-btn" onClick={() => navigate('/publish-resource')}>
+          + 发布资源
+        </button>
       </div>
 
-      <ListingFilter mode="resources" value={params} onChange={updateParams} />
+      <ListingFilter
+        mode="resources"
+        value={params}
+        categories={categories}
+        categoriesError={categoriesQuery.error}
+        resourceTypes={resourceTypesQuery.data || []}
+        resourceTypesError={resourceTypesQuery.error}
+        onChange={setParams}
+      />
 
       <div className="card">
         <div className="card-body">
           <div className="sort-bar">
-            <div>共 {resourcesQuery.data?.total || 0} 个公开资源（仅显示已发布）</div>
+            <div>共 {total} 个公开资源（仅显示已发布）</div>
             <div className="sort-items">
-              {[
-                ['latest', '最新发布'],
-                ['download', '下载最多'],
-                ['score', '评分最高'],
-              ].map(([key, label]) => (
-                <button
-                  type="button"
-                  key={key}
-                  className={params.sort === key ? 'active' : undefined}
-                  onClick={() => updateParams((prev) => ({ ...prev, sort: key, page: 1 }))}
+              {sorts.map((sort) => (
+                <span
+                  className={params.sort === sort.key ? 'active' : undefined}
+                  key={sort.key}
+                  onClick={() => setParams((prev) => ({ ...prev, page: 1, sort: sort.key }))}
                 >
-                  {label}
-                </button>
+                  {sort.label}
+                </span>
               ))}
             </div>
           </div>
@@ -59,42 +72,35 @@ export default function ResourcesPage() {
       </div>
 
       <div className="card">
-        <Spin spinning={resourcesQuery.isLoading || action.isPending}>
-          <div className="card-body" style={{ padding: 0 }}>
-            {items.map((resource) => (
-              <ResourceCard
-                key={resource.id}
-                resource={resource}
-                onFavorite={async (id) => {
-                  try {
-                    await action.mutateAsync({ id, action: 'favorite' });
-                    message.success('收藏状态已更新');
-                  } catch (error) {
-                    message.error(error instanceof Error ? error.message : '收藏失败，请稍后重试');
-                  }
-                }}
-                onLike={async (id) => {
-                  try {
-                    await action.mutateAsync({ id, action: 'like' });
-                    message.success('点赞状态已更新');
-                  } catch (error) {
-                    message.error(error instanceof Error ? error.message : '点赞失败，请稍后重试');
-                  }
-                }}
-              />
-            ))}
-            {!items.length && !resourcesQuery.isLoading && <Empty description="暂无匹配资源" style={{ padding: '40px 0' }} />}
-          </div>
-        </Spin>
+        <div className="card-title">资源列表</div>
+        <div className="card-body">
+          {items.map((resource) => (
+            <ResourceCard resource={resource} categories={categories} key={resource.id} />
+          ))}
+          {resourcesQuery.isError && <InlineApiError error={resourcesQuery.error} />}
+          {!items.length && <div style={{ padding: 40, textAlign: 'center', color: '#999' }}>{resourcesQuery.isLoading ? '加载中...' : '暂无资源'}</div>}
+        </div>
       </div>
 
-      <Pagination
-        className="page-pagination"
-        current={params.page}
-        pageSize={params.pageSize}
-        total={resourcesQuery.data?.total || 0}
-        onChange={(page, pageSize) => updateParams((prev) => ({ ...prev, page, pageSize }))}
-      />
-    </>
+      {totalPages > 1 && (
+        <div className="page-bar">
+          {(params.page || 1) > 1 && (
+            <button className="page-item" onClick={() => goPage((params.page || 1) - 1)}>
+              上一页
+            </button>
+          )}
+          {Array.from({ length: totalPages }, (_, index) => index + 1).map((page) => (
+            <button className={`page-item ${page === (params.page || 1) ? 'active' : ''}`} key={page} onClick={() => goPage(page)}>
+              {page}
+            </button>
+          ))}
+          {(params.page || 1) < totalPages && (
+            <button className="page-item" onClick={() => goPage((params.page || 1) + 1)}>
+              下一页
+            </button>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

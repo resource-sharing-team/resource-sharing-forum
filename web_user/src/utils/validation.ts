@@ -17,19 +17,5 @@ export const demandPublishSchema = z.object({
   tags: z.array(z.string()).min(1, '至少添加 1 个标签').max(5, '最多 5 个标签'),
   description: z.string().min(20, '需求说明至少 20 个字').max(500, '需求说明最多 500 个字'),
   format: z.string().min(1, '请填写期望格式'),
-  rewardType: z.enum(['FREE', 'POINT']).optional(),
-  rewardPoints: z.coerce.number().optional(),
-  points: z.coerce.number().optional(),
-}).superRefine((value, context) => {
-  const requestedPoints = Number(value.rewardPoints ?? value.points ?? 0);
-  const rewardType = value.rewardType || (requestedPoints > 0 ? 'POINT' : 'FREE');
-  if (requestedPoints < 0) {
-    context.addIssue({ code: z.ZodIssueCode.custom, path: ['rewardPoints'], message: '悬赏积分不能小于 0' });
-  }
-  if (rewardType === 'FREE' && requestedPoints > 0 && value.rewardType === 'FREE') {
-    context.addIssue({ code: z.ZodIssueCode.custom, path: ['rewardPoints'], message: '免费求资源不能设置悬赏积分' });
-  }
-  if (rewardType === 'POINT' && requestedPoints < 1) {
-    context.addIssue({ code: z.ZodIssueCode.custom, path: ['rewardPoints'], message: '积分悬赏至少 1 分' });
-  }
+  points: z.coerce.number().min(0, '悬赏积分不能小于 0').max(1000, '悬赏积分最多 1000'),
 });

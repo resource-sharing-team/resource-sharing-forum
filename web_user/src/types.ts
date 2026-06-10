@@ -4,6 +4,11 @@ export type Category = {
   children: Array<{ id: string; name: string }>;
 };
 
+export type ResourceTypeOption = {
+  value: string;
+  label: string;
+};
+
 export type User = {
   id: number;
   username: string;
@@ -15,95 +20,8 @@ export type User = {
   avatar: string;
   level: string;
   points: number;
-  frozenPoints: number;
-  availablePoints: number;
-  rewardLimit: number;
   expNeeded: number;
-  upgradeProgress?: number;
-  progressPercent?: number;
-  levelCode?: string;
-  levelInfo?: MemberLevelInfo;
-  levelMinPoints?: number;
-  levelMaxPoints?: number | null;
-  nextLevel?: string;
-  nextLevelMinPoints?: number;
-  dailyDownloadLimit?: number;
-  dailyResourcePublishLimit?: number;
-  dailyRequestPublishLimit?: number;
-  maxFilesPerResource?: number;
-  maxFileSizeMb?: number;
-  canApplyTop?: boolean;
-  benefits?: MemberBenefit[];
-  pointRules?: PointRule[];
-  rules?: PointRule[];
   passwordUpdatedAt: string;
-};
-
-export type MemberLevelInfo = {
-  code?: string;
-  name?: string;
-  minPoints?: number;
-  maxPoints?: number | null;
-};
-
-export type MemberBenefit = {
-  name: string;
-  description?: string;
-  limit: string | number | boolean;
-  enabled?: boolean;
-};
-
-export type PointRule = {
-  key?: string;
-  action: string;
-  points: string;
-  note: string;
-};
-
-export type PointAccount = Pick<
-  User,
-  | 'points'
-  | 'frozenPoints'
-  | 'availablePoints'
-  | 'level'
-  | 'rewardLimit'
-  | 'expNeeded'
-  | 'upgradeProgress'
-  | 'progressPercent'
-  | 'levelCode'
-  | 'levelInfo'
-  | 'levelMinPoints'
-  | 'levelMaxPoints'
-  | 'nextLevel'
-  | 'nextLevelMinPoints'
-  | 'dailyDownloadLimit'
-  | 'dailyResourcePublishLimit'
-  | 'dailyRequestPublishLimit'
-  | 'maxFilesPerResource'
-  | 'maxFileSizeMb'
-  | 'canApplyTop'
-  | 'benefits'
-  | 'pointRules'
-  | 'rules'
->;
-
-export type PointFlow = {
-  id: number;
-  flowType: string;
-  scene: string;
-  sceneLabel?: string;
-  pointsChange: number;
-  frozenChange: number;
-  beforePoints: number;
-  afterPoints: number;
-  beforeFrozenPoints: number;
-  afterFrozenPoints: number;
-  relatedType?: string;
-  relatedId?: number;
-  relatedLabel?: string;
-  description?: string;
-  balanceText?: string;
-  createTime: string;
 };
 
 export type ResourceAttachment = {
@@ -134,10 +52,10 @@ export type Resource = {
   favorited: boolean;
   userRating: number;
   ratingCount: number;
+  status?: string;
 };
 
-export type DemandStatus = 'active' | 'solved';
-export type RewardType = 'FREE' | 'POINT';
+export type DemandStatus = 'active' | 'solved' | 'cancelled' | 'closed';
 
 export type Demand = {
   id: number;
@@ -145,7 +63,6 @@ export type Demand = {
   description: string;
   category1: string;
   category2: string;
-  rewardType?: RewardType;
   points: number;
   replyCount: number;
   author: string;
@@ -157,25 +74,57 @@ export type Demand = {
 
 export type Comment = {
   id: number;
+  parentId?: number;
+  resourceId?: number;
+  externalUrl?: string;
   author: string;
   content: string;
   date: string;
   mine?: boolean;
   accepted?: boolean;
+  replyToAuthor?: string;
   replies?: Comment[];
 };
 
 export type ReportTarget = 'RESOURCE' | 'DEMAND' | 'COMMENT' | 'COPYRIGHT';
+
+export type Announcement = {
+  id: number;
+  title: string;
+  content: string;
+  date: string;
+};
+
+export type NotificationMessage = {
+  id: number;
+  title: string;
+  content: string;
+  unread: boolean;
+  date: string;
+};
+
+export type LoginLog = {
+  id: number;
+  ip: string;
+  device: string;
+  location: string;
+  time: string;
+};
+
+export type DownloadInfo = {
+  recordId: number;
+  fileName: string;
+  downloadUrl: string;
+};
 
 export type ListParams = {
   keyword?: string;
   cate1?: string;
   cate2?: string;
   type?: string;
+  rewardRange?: string;
   status?: string;
-  points?: string;
   sort?: string;
-  order?: string;
   page?: number;
   pageSize?: number;
 };
@@ -192,6 +141,6 @@ export type ProfileSummary = {
   demands: Demand[];
   favorites: Resource[];
   likes: Resource[];
-  messages: Array<{ id: number; title: string; content: string; unread: boolean; date: string }>;
-  loginLogs: Array<{ id: number; ip: string; device: string; location: string; time: string }>;
+  messages: NotificationMessage[];
+  loginLogs: LoginLog[];
 };

@@ -1,261 +1,412 @@
-import { apiClient } from './client';
-import type { Comment, Demand, ListParams, PagedResult, PointAccount, PointFlow, ProfileSummary, ReportTarget, Resource, User } from '../types';
+import { apiClient, apiHostURL, apiPrefix, profileBasePath, usesV1Api } from './client';
+import {
+  mapAnnouncements,
+  mapCategories,
+  mapComment,
+  mapDemand,
+  mapDemandDetail,
+  mapDownloadInfo,
+  mapLoginLogs,
+  mapNotifications,
+  mapPaged,
+  mapProfileSummary,
+  mapResource,
+  mapResourceDetail,
+  mapResourceTypes,
+  mapUser,
+} from './adapters';
+import type {
+  Announcement,
+  Category,
+  Comment,
+  Demand,
+  DownloadInfo,
+  ListParams,
+  LoginLog,
+  NotificationMessage,
+  PagedResult,
+  ProfileSummary,
+  ReportTarget,
+  Resource,
+  ResourceTypeOption,
+  User,
+} from '../types';
+
+type AuthPayload = {
+  token?: string;
+  user?: unknown;
+};
+
+export const userCenterBasePath = usesV1Api ? '/user' : '/v1/user';
 
 export async function login(values: { account: string; password: string }) {
-  const { data } = await apiClient.post<{ token: string; user: User }>('/auth/login', values);
-  return data;
+  const { data } = await apiClient.post<AuthPayload>('/auth/login', { ...values, rememberMe: true });
+  return {
+    token: data.token || '',
+    user: mapUser(data.user),
+  };
 }
 
 export async function register(values: { username: string; email: string; password: string }) {
-  const { data } = await apiClient.post<{ token: string; user: User }>('/auth/register', values);
-  return data;
+  const { data } = await apiClient.post<AuthPayload>('/auth/register', values);
+  return {
+    token: data.token || '',
+    user: mapUser(data.user),
+  };
 }
 
 export async function resetPassword(values: { email: string; code: string; password: string }) {
-  const { data } = await apiClient.post<{ ok: boolean }>('/auth/reset-password', values);
-  return data;
+  const payload = {
+    account: values.email,
+    email: values.email,
+    code: values.code,
+    password: values.password,
+    newPassword: values.password,
+  };
+  const { data } = await apiClient.post<{ ok?: boolean }>('/auth/reset-password', payload);
+  return { ok: data?.ok !== false };
 }
 
-export async function getMe() {
-  const { data } = await apiClient.get<User>('/me');
-  return data;
+export async function sendResetPasswordCode(values: { email: string }) {
+  const { data } = await apiClient.post<{ ok?: boolean; devCode?: string }>('/auth/reset-password/code', {
+    account: values.email,
+    email: values.email,
+  });
+  return { ok: data?.ok !== false, devCode: data?.devCode };
 }
 
-export async function updateMe(values: Partial<User>) {
-  const { data } = await apiClient.put<User>('/me', values);
-  return data;
+export async function getMe(): Promise<User> {
+  const { data } = await apiClient.get<unknown>(profileBasePath);
+  return mapUser(data);
+}
+
+export async function updateMe(values: Partial<User>): Promise<User> {
+  const { data } = await apiClient.put<unknown>(profileBasePath, values);
+  return mapUser(data);
 }
 
 export async function changePassword(values: { oldPassword: string; newPassword: string }) {
-  const { data } = await apiClient.post<{ ok: boolean; passwordUpdatedAt: string }>('/me/password', values);
-  return data;
-}
-
-export async function bindEmail(values: { email: string; code: string }) {
-  const { data } = await apiClient.post<User>('/me/email', values);
-  return data;
-}
-
-export async function getProfileSummary() {
-  const { data } = await apiClient.get<Partial<ProfileSummary> & { profile?: User }>('/me/summary');
-  return normalizeProfileSummary(data);
-}
-
-export async function getPointAccount() {
-  const { data } = await apiClient.get<PointAccount>('/v1/user/points');
-  return normalizePointAccount(data);
-}
-
-export async function getPointFlows(page = 1, pageSize = 8) {
-  const { data } = await apiClient.get<PagedResult<PointFlow>>('/v1/user/points/flows', { params: { page, pageSize } });
-  return normalizePage(data, normalizePointFlow);
-}
-
-export async function getResources(params: ListParams) {
-  const { data } = await apiClient.get<PagedResult<Resource>>('/resources', { params });
-  return normalizePage(data, normalizeResource);
-}
-
-export async function getResource(id: string | number) {
-  const { data } = await apiClient.get<{ resource: Resource; comments: Comment[] }>(`/resources/${id}`);
+  const payload = {
+    ...values,
+    currentPassword: values.oldPassword,
+    password: values.newPassword,
+  };
+  const { data } = await apiClient.post<{ ok?: boolean; passwordUpdatedAt?: string }>(`${profileBasePath}/password`, payload);
   return {
-    resource: normalizeResource(data.resource),
-    comments: data.comments || [],
+    ok: data?.ok !== false,
+    passwordUpdatedAt: data?.passwordUpdatedAt || new Date().toISOString().slice(0, 10),
   };
 }
 
-export async function publishResource(formData: FormData) {
-  const { data } = await apiClient.post<Resource>('/resources', formData, {
+export async function bindEmail(values: { email: string }): Promise<User> {
+  const { data } = await apiClient.post<unknown>(`${profileBasePath}/email`, {
+    ...values,
+    newEmail: values.email,
+  });
+  return mapUser(data);
+}
+
+export async function getProfileSummary(): Promise<ProfileSummary> {
+  const { data } = await apiClient.get<unknown>(`${profileBasePath}/summary`);
+  return mapProfileSummary(data);
+}
+
+export async function getResources(params: ListParams): Promise<PagedResult<Resource>> {
+  const { data } = await apiClient.get<unknown>('/resources', { params: toBackendListParams(params) });
+  return mapPaged(data, mapResource);
+}
+
+export async function getResource(id: string | number): Promise<{ resource: Resource; comments: Comment[] }> {
+  const { data } = await apiClient.get<unknown>(`/resources/${id}`);
+  return mapResourceDetail(data);
+}
+
+export async function publishResource(formData: FormData): Promise<Resource> {
+  const { data } = await apiClient.post<unknown>('/resources', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   });
-  return normalizeResource(data);
+  return mapResource(data);
 }
 
-export async function toggleResourceAction(id: number, action: 'like' | 'favorite' | 'download', attachmentId?: number) {
-  const { data } = await apiClient.post<Resource>(`/resources/${id}/${action}`, { attachmentId });
-  return normalizeResource(data);
+export async function toggleResourceAction(id: number, action: 'like' | 'favorite' | 'download', attachmentId?: number): Promise<Resource> {
+  if (action === 'download') {
+    await apiClient.post(`/resources/${id}/download`, { attachmentId });
+    return (await getResource(id)).resource;
+  }
+
+  const { data } = await apiClient.post<unknown>(`/resources/${id}/${action}`);
+  return mapResource(data);
 }
 
-export async function rateResource(id: number, score: number) {
-  const { data } = await apiClient.post<Resource>(`/resources/${id}/rating`, { score });
-  return normalizeResource(data);
+export async function downloadAttachment(attachmentId: number): Promise<DownloadInfo> {
+  const downloadPath = usesV1Api ? `/attachments/${attachmentId}/download` : `/files/${attachmentId}/download`;
+  const { data } = await apiClient.get<unknown>(downloadPath);
+  return mapDownloadInfo(data);
 }
 
-export async function getDemands(params: ListParams) {
-  const { data } = await apiClient.get<PagedResult<Demand>>('/demands', { params });
-  return normalizePage(data, normalizeDemand);
-}
+export async function downloadAttachmentFile(attachmentId: number): Promise<{ fileName: string; blob: Blob }> {
+  const info = await downloadAttachment(attachmentId);
+  if (!info.downloadUrl) {
+    throw new Error('后端未返回附件下载地址');
+  }
 
-export async function getDemand(id: string | number) {
-  const { data } = await apiClient.get<{ demand?: Demand; request?: Demand; comments?: Comment[]; replies?: Comment[]; answers?: Comment[] }>(`/demands/${id}`);
-  const replies = data.replies || data.answers || [];
+  const downloadPath = toApiClientDownloadPath(info.downloadUrl);
+  const { data, headers, status } = await apiClient.get<Blob>(downloadPath, {
+    responseType: 'blob',
+    validateStatus: () => true,
+  });
+
+  if (status >= 400) {
+    const message = await readBlobError(data);
+    throw new Error(message ? `附件下载失败（HTTP ${status}）：${message}` : `附件下载失败（HTTP ${status}）：${downloadPath}`);
+  }
+
+  if (data.type.includes('application/json')) {
+    const message = await readBlobError(data);
+    throw new Error(message || '附件流接口返回了错误响应');
+  }
+
   return {
-    demand: normalizeDemand(data.demand || data.request),
-    comments: [...replies, ...(data.comments || [])].map(normalizeComment),
+    fileName: contentDispositionFileName(headers['content-disposition']) || info.fileName || `attachment-${attachmentId}`,
+    blob: data,
   };
 }
 
-export async function publishDemand(values: Record<string, unknown>) {
-  const { data } = await apiClient.post<Demand>('/demands', normalizeDemandPayload(values));
-  return normalizeDemand(data);
+export async function rateResource(id: number, score: number): Promise<Resource> {
+  if (score <= 0) {
+    return (await getResource(id)).resource;
+  }
+
+  const { data } = await apiClient.post<unknown>(`/resources/${id}/rating`, { score: Math.min(5, score) });
+  return mapResource(data);
 }
 
-export async function addComment(kind: 'resources' | 'demands', id: number, content: string) {
-  const url = kind === 'demands' ? `/demands/${id}/replies` : `/${kind}/${id}/comments`;
-  const { data } = await apiClient.post<Comment>(url, { content });
-  return normalizeComment(data);
+export async function getDemands(params: ListParams): Promise<PagedResult<Demand>> {
+  const { data } = await apiClient.get<unknown>('/requests', { params: toBackendListParams(params) });
+  return mapPaged(data, mapDemand);
 }
 
-export async function reportContent(values: { target: ReportTarget; targetId: number; type: string; reason: string }) {
-  const { data } = await apiClient.post<{ ok: boolean }>('/reports', values);
-  return data;
+export async function getDemand(id: string | number): Promise<{ demand: Demand; comments: Comment[] }> {
+  const { data } = await apiClient.get<unknown>(`/requests/${id}`);
+  return mapDemandDetail(data);
 }
 
-function normalizePage<T>(page: PagedResult<T>, mapItem: (item: T) => T): PagedResult<T> {
-  return {
-    ...page,
-    items: (page.items || []).map(mapItem),
-    pageSize: page.pageSize || 10,
-  };
-}
-
-function normalizeResource(resource: Resource): Resource {
-  return {
-    ...resource,
-    type: normalizeResourceType(resource?.type || (resource as Resource & { resourceType?: string })?.resourceType),
-    tags: resource?.tags || [],
-    attachments: resource?.attachments || [],
-    downloads: Number(resource?.downloads || 0),
-    score: Number(resource?.score || 0),
-    ratingCount: Number(resource?.ratingCount || 0),
-    userRating: Number(resource?.userRating || 0),
-    liked: Boolean(resource?.liked),
-    favorited: Boolean(resource?.favorited),
-  };
-}
-
-function normalizePointAccount(account: PointAccount): PointAccount {
-  const points = Number(account?.points || 0);
-  const frozenPoints = Number(account?.frozenPoints || 0);
-  const availablePoints = Number(account?.availablePoints ?? Math.max(0, points - frozenPoints));
-  const progress = Number(account?.progressPercent ?? account?.upgradeProgress ?? 0);
-  const rules = account?.rules || account?.pointRules || [];
-  return {
-    ...account,
-    points,
-    frozenPoints,
-    availablePoints,
-    rewardLimit: Number(account?.rewardLimit || 0),
-    expNeeded: Number(account?.expNeeded || 0),
-    progressPercent: progress,
-    upgradeProgress: progress,
-    benefits: account?.benefits || [],
-    pointRules: rules,
-    rules,
-  };
-}
-
-function normalizePointFlow(flow: PointFlow): PointFlow {
-  return {
-    ...flow,
-    id: Number(flow?.id || 0),
-    flowType: flow?.flowType || '',
-    scene: flow?.scene || '',
-    sceneLabel: flow?.sceneLabel || flow?.scene || flow?.flowType || '积分变动',
-    pointsChange: Number(flow?.pointsChange || 0),
-    frozenChange: Number(flow?.frozenChange || 0),
-    beforePoints: Number(flow?.beforePoints || 0),
-    afterPoints: Number(flow?.afterPoints || 0),
-    beforeFrozenPoints: Number(flow?.beforeFrozenPoints || 0),
-    afterFrozenPoints: Number(flow?.afterFrozenPoints || 0),
-    relatedId: Number(flow?.relatedId || 0),
-    relatedLabel: flow?.relatedLabel || '',
-    description: flow?.description || '',
-    balanceText: flow?.balanceText || `当前 ${Number(flow?.afterPoints || 0)} 分，冻结 ${Number(flow?.afterFrozenPoints || 0)} 分`,
-    createTime: flow?.createTime || '',
-  };
-}
-
-function normalizeResourceType(type?: string): string {
-  const normalized = String(type || '').trim();
-  const map: Record<string, string> = {
-    DOCUMENT: '文档',
-    document: '文档',
-    SOFTWARE: '软件',
-    software: '软件',
-    SOURCE_CODE: '源码',
-    source: '源码',
-    MATERIAL: '素材',
-    material: '素材',
-    COURSE: '教程',
-    course: '教程',
-    TEMPLATE: '模板',
-    template: '模板',
-    LINK: '链接',
-    link: '链接',
-  };
-  return map[normalized] || normalized || '文档';
-}
-
-function normalizeDemand(demand?: Demand): Demand {
-  const rawStatus = String(demand?.status || '');
-  const status = rawStatus === 'RESOLVED' || rawStatus === 'solved' ? 'solved' : 'active';
-  const points = Number(demand?.points || (demand as Demand & { rewardPoints?: number })?.rewardPoints || 0);
-  const rewardType: Demand['rewardType'] = String(demand?.rewardType || '').toUpperCase() === 'POINT' || points > 0 ? 'POINT' : 'FREE';
-  return {
-    ...demand,
-    id: demand?.id || 0,
-    title: demand?.title || '',
-    description: demand?.description || '',
-    category1: demand?.category1 || '',
-    category2: demand?.category2 || '',
-    rewardType,
-    points,
-    replyCount: Number(demand?.replyCount || 0),
-    author: demand?.author || '',
-    date: demand?.date || '',
-    status,
-    tags: demand?.tags || [],
-    format: demand?.format || '',
-  };
-}
-
-function normalizeComment(comment?: Comment): Comment {
-  return {
-    ...(comment || {}),
-    id: comment?.id || 0,
-    author: comment?.author || '',
-    content: comment?.content || '',
-    date: comment?.date || '',
-    mine: Boolean(comment?.mine),
-    accepted: Boolean(comment?.accepted),
-    replies: (comment?.replies || []).map(normalizeComment),
-  };
-}
-
-function normalizeDemandPayload(values: Record<string, unknown>) {
-  const requestedPoints = Number(values.rewardPoints ?? values.points ?? 0) || 0;
-  const rawRewardType = String(values.rewardType || '').toUpperCase();
-  const rewardType = rawRewardType === 'POINT' || (!rawRewardType && requestedPoints > 0) ? 'POINT' : 'FREE';
-  const rewardPoints = rewardType === 'POINT' ? requestedPoints : 0;
-  return {
+export async function publishDemand(values: Record<string, unknown>): Promise<Demand> {
+  const payload = {
     ...values,
-    tags: Array.isArray(values.tags) ? values.tags.join(',') : values.tags,
-    content: values.content || values.description,
-    rewardType,
-    rewardPoints,
-    points: rewardPoints,
-    expectedFormat: values.expectedFormat || values.format,
+    categoryId: values.category2,
+    expectedFormat: values.format,
+    rewardPoints: values.points,
+  };
+  const { data } = await apiClient.post<unknown>('/requests', payload);
+  return mapDemand(data);
+}
+
+export async function cancelDemand(id: number) {
+  const { data } = await apiClient.post<{ ok?: boolean }>(`/requests/${id}/cancel`);
+  return { ok: data?.ok !== false };
+}
+
+export async function addComment(
+  kind: 'resources' | 'demands',
+  id: number,
+  values: { content: string; parentId?: number; resourceId?: number; externalUrl?: string },
+): Promise<Comment> {
+  if (kind === 'demands' && !values.parentId) {
+    const { data } = await apiClient.post<unknown>(`/requests/${id}/replies`, {
+      content: values.content,
+      resourceId: values.resourceId,
+      externalUrl: values.externalUrl,
+    });
+    return mapComment(data);
+  }
+
+  const { data } = await apiClient.post<unknown>('/comments', {
+    targetType: kind === 'resources' ? 'RESOURCE' : 'REQUEST_POST',
+    targetId: id,
+    content: values.content,
+    parentId: values.parentId,
+  });
+  return mapComment(data);
+}
+
+export async function deleteComment(id: number) {
+  const { data } = await apiClient.delete<{ ok?: boolean }>(`/comments/${id}`);
+  return { ok: data?.ok !== false };
+}
+
+export async function reportContent(values: {
+  target: ReportTarget;
+  targetId: number;
+  type: string;
+  title?: string;
+  reason: string;
+  proofSummary?: string;
+  contactEmail?: string;
+}) {
+  const isCopyright = values.target === 'COPYRIGHT' || values.type === 'COPYRIGHT';
+  const targetType = values.target === 'DEMAND' ? 'REQUEST_POST' : values.target;
+  const commonPayload = {
+    targetId: values.targetId,
+    title: values.title,
+    reason: values.reason,
+    proofSummary: values.proofSummary,
+    contactEmail: values.contactEmail,
+  };
+  const payload = isCopyright
+    ? commonPayload
+    : {
+        ...commonPayload,
+        target: targetType,
+        targetType,
+        type: values.type,
+      };
+  const { data } = await apiClient.post<{ ok?: boolean }>(isCopyright ? '/reports/copyright-complaints' : '/reports', payload);
+  return { ok: data?.ok !== false };
+}
+
+export async function getNotificationMessages(params: { page?: number; pageSize?: number } = {}): Promise<PagedResult<NotificationMessage>> {
+  const { data } = await apiClient.get<unknown>('/notifications', { params: { page: params.page || 1, size: params.pageSize || 20 } });
+  return mapNotifications(data);
+}
+
+export async function markNotificationRead(id: number) {
+  await apiClient.post(`/notifications/${id}/read`);
+  return { ok: true };
+}
+
+export async function markAllNotificationsRead() {
+  await apiClient.post('/notifications/read-all');
+  return { ok: true };
+}
+
+export async function getCategories(): Promise<Category[]> {
+  const { data } = await apiClient.get<unknown>('/categories');
+  return mapCategories(data);
+}
+
+export async function getResourceTypes(): Promise<ResourceTypeOption[]> {
+  const { data } = await apiClient.get<unknown>('/resource-types');
+  return mapResourceTypes(data);
+}
+
+export async function getAnnouncements(params: { page?: number; pageSize?: number } = {}): Promise<PagedResult<Announcement>> {
+  const { data } = await apiClient.get<unknown>('/announcements', { params: { page: params.page || 1, size: params.pageSize || 5 } });
+  return mapAnnouncements(data);
+}
+
+export async function getUserResources(params: ListParams = {}): Promise<PagedResult<Resource>> {
+  const { data } = await apiClient.get<unknown>(`${userCenterBasePath}/resources`, { params: toBackendListParams(params) });
+  return mapPaged(data, mapResource);
+}
+
+export async function getUserRequests(params: ListParams = {}): Promise<PagedResult<Demand>> {
+  const { data } = await apiClient.get<unknown>(`${userCenterBasePath}/requests`, { params: toBackendListParams(params) });
+  return mapPaged(data, mapDemand);
+}
+
+export async function getUserFavorites(params: ListParams = {}): Promise<PagedResult<Resource>> {
+  const { data } = await apiClient.get<unknown>(`${userCenterBasePath}/favorites`, { params: toBackendListParams(params) });
+  return mapPaged(data, mapResource);
+}
+
+export async function getUserLikes(params: ListParams = {}): Promise<PagedResult<Resource>> {
+  const { data } = await apiClient.get<unknown>(`${userCenterBasePath}/likes`, { params: toBackendListParams(params) });
+  return mapPaged(data, mapResource);
+}
+
+export async function getUserLoginRecords(params: { page?: number; pageSize?: number } = {}): Promise<PagedResult<LoginLog>> {
+  const { data } = await apiClient.get<unknown>(`${userCenterBasePath}/login-records`, { params: { page: params.page || 1, size: params.pageSize || 20 } });
+  return mapLoginLogs(data);
+}
+
+export function absoluteDownloadUrl(downloadUrl: string) {
+  return new URL(downloadUrl, apiHostURL).toString();
+}
+
+function toBackendListParams(params: ListParams) {
+  const categoryId = params.cate2;
+  return {
+    page: params.page,
+    size: params.pageSize,
+    keyword: params.keyword,
+    categoryId,
+    category1: params.cate1,
+    cate1: params.cate1,
+    category2: params.cate2,
+    cate2: params.cate2,
+    resourceType: toResourceType(params.type),
+    type: params.type,
+    rewardRange: params.rewardRange,
+    points: params.rewardRange,
+    pointsFilter: params.rewardRange,
+    status: toRequestStatus(params.status),
+    sort: params.sort,
   };
 }
 
-function normalizeProfileSummary(data: Partial<ProfileSummary> & { profile?: User }): ProfileSummary {
-  return {
-    resources: (data.resources || []).map(normalizeResource),
-    demands: (data.demands || []).map(normalizeDemand),
-    favorites: (data.favorites || []).map(normalizeResource),
-    likes: (data.likes || []).map(normalizeResource),
-    messages: data.messages || [],
-    loginLogs: data.loginLogs || [],
+function toApiClientDownloadPath(downloadUrl: string) {
+  if (/^https?:\/\//i.test(downloadUrl)) {
+    return downloadUrl;
+  }
+  if (downloadUrl === apiPrefix) {
+    return '/';
+  }
+  if (downloadUrl.startsWith(`${apiPrefix}/`)) {
+    return downloadUrl.slice(apiPrefix.length);
+  }
+  if (!usesV1Api && downloadUrl.startsWith('/api/v1/')) {
+    return downloadUrl.slice('/api'.length);
+  }
+  if (usesV1Api && downloadUrl.startsWith('/api/v1/')) {
+    return downloadUrl.slice('/api/v1'.length) || '/';
+  }
+  return downloadUrl;
+}
+
+async function readBlobError(blob: Blob) {
+  try {
+    const raw = await blob.text();
+    const parsed = JSON.parse(raw) as { message?: string; code?: number };
+    return parsed.message || raw;
+  } catch {
+    return '';
+  }
+}
+
+function contentDispositionFileName(value: unknown) {
+  const header = Array.isArray(value) ? value[0] : String(value || '');
+  const utf8Match = header.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) return decodeFileName(utf8Match[1]);
+  const plainMatch = header.match(/filename="?([^";]+)"?/i);
+  return plainMatch?.[1] ? decodeFileName(plainMatch[1]) : '';
+}
+
+function decodeFileName(value: string) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function toRequestStatus(status?: string) {
+  if (status === 'active') return 'ONGOING';
+  if (status === 'solved') return 'RESOLVED';
+  if (status === 'cancelled') return 'CANCELLED';
+  if (status === 'closed') return 'CLOSED';
+  return status;
+}
+
+function toResourceType(type?: string) {
+  const map: Record<string, string> = {
+    文档: 'DOCUMENT',
+    软件: 'SOFTWARE',
+    源码: 'SOURCE_CODE',
+    素材: 'MATERIAL',
+    教程: 'COURSE',
+    模板: 'TEMPLATE',
+    链接: 'LINK',
   };
+  return type ? map[type] || type : undefined;
 }

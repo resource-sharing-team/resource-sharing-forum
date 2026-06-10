@@ -55,25 +55,14 @@ export function filterDemands(demands: Demand[], params: ListParams) {
   if (params.cate1) result = result.filter((item) => item.category1 === params.cate1);
   if (params.cate2) result = result.filter((item) => item.category2 === params.cate2);
   if (params.status) result = result.filter((item) => item.status === params.status);
-  if (params.points) result = result.filter((item) => matchesRewardPoints(item.points, params.points || ''));
 
-  const direction = params.order === 'asc' ? 1 : -1;
   if (params.sort === 'points') {
-    result.sort((a, b) => direction * (a.points - b.points));
+    result.sort((a, b) => b.points - a.points);
   } else if (params.sort === 'reply') {
-    result.sort((a, b) => direction * (a.replyCount - b.replyCount));
+    result.sort((a, b) => b.replyCount - a.replyCount);
   } else {
-    result.sort((a, b) => direction * a.date.localeCompare(b.date));
+    result.sort((a, b) => b.date.localeCompare(a.date));
   }
 
   return result;
-}
-
-function matchesRewardPoints(points: number, range: string) {
-  if (range === 'free') return points === 0;
-  if (range === '0-100') return points > 0 && points <= 100;
-  if (range === '100-500') return points > 100 && points <= 500;
-  if (range === '500-2000') return points > 500 && points <= 2000;
-  if (range === '2000+') return points > 2000;
-  return true;
 }

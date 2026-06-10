@@ -7,10 +7,8 @@ import App from './App';
 import './styles.css';
 
 async function enableMocking() {
-  if (!import.meta.env.DEV) return;
-  const mockMode = import.meta.env.VITE_ENABLE_MOCKS;
-  const hasBackendBaseUrl = Boolean(import.meta.env.VITE_API_BASE_URL);
-  if (mockMode === 'false' || (hasBackendBaseUrl && mockMode !== 'true')) return;
+  const enableMocks = import.meta.env.VITE_ENABLE_MOCKS === 'true';
+  if (!enableMocks) return;
   const { worker } = await import('./mocks/browser');
   await worker.start({ onUnhandledRequest: 'bypass', quiet: true });
 }

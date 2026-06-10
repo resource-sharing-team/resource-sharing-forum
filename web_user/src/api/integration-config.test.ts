@@ -11,10 +11,9 @@ describe('frontend backend integration config', () => {
     expect(readme).toContain('VITE_ENABLE_MOCKS=false');
   });
 
-  it('does not start MSW when a backend base URL is configured unless mocks are explicit', () => {
-    expect(main).toContain("import.meta.env.VITE_API_BASE_URL");
-    expect(main).toContain("mockMode === 'false'");
-    expect(main).toContain("hasBackendBaseUrl && mockMode !== 'true'");
+  it('starts MSW only when mock mode is explicitly enabled', () => {
+    expect(main).toContain("import.meta.env.VITE_ENABLE_MOCKS === 'true'");
+    expect(main).toContain('if (!enableMocks) return;');
   });
 
   it('runs backend e2e assertions against the configured backend base URL', () => {

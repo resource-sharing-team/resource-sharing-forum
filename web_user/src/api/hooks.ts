@@ -1,31 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as endpoints from './endpoints';
-import type { ListParams, User } from '../types';
-import { useAuthStore } from '../store/auth';
+import type { Comment, ListParams, User } from '../types';
 
-export function useMe() {
-  const token = useAuthStore((state) => state.token);
-  return useQuery({ queryKey: ['me'], queryFn: endpoints.getMe, enabled: Boolean(token), retry: 0 });
+export function useMe(enabled = true) {
+  return useQuery({ queryKey: ['me'], queryFn: endpoints.getMe, enabled });
 }
 
 export function useProfileSummary() {
-  const token = useAuthStore((state) => state.token);
-  return useQuery({ queryKey: ['profile-summary'], queryFn: endpoints.getProfileSummary, enabled: Boolean(token), retry: 0 });
-}
-
-export function usePointAccount() {
-  const token = useAuthStore((state) => state.token);
-  return useQuery({ queryKey: ['point-account'], queryFn: endpoints.getPointAccount, enabled: Boolean(token), retry: 0 });
-}
-
-export function usePointFlows(page = 1, pageSize = 8) {
-  const token = useAuthStore((state) => state.token);
-  return useQuery({
-    queryKey: ['point-flows', page, pageSize],
-    queryFn: () => endpoints.getPointFlows(page, pageSize),
-    enabled: Boolean(token),
-    retry: 0,
-  });
+  return useQuery({ queryKey: ['profile-summary'], queryFn: endpoints.getProfileSummary });
 }
 
 export function useUpdateMe() {
@@ -54,6 +36,18 @@ export function useBindEmail() {
   });
 }
 
+export function useCategories() {
+  return useQuery({ queryKey: ['categories'], queryFn: endpoints.getCategories });
+}
+
+export function useResourceTypes() {
+  return useQuery({ queryKey: ['resource-types'], queryFn: endpoints.getResourceTypes });
+}
+
+export function useAnnouncements(params: { page?: number; pageSize?: number } = {}) {
+  return useQuery({ queryKey: ['announcements', params], queryFn: () => endpoints.getAnnouncements(params) });
+}
+
 export function useResources(params: ListParams) {
   return useQuery({ queryKey: ['resources', params], queryFn: () => endpoints.getResources(params) });
 }
@@ -70,10 +64,7 @@ export function usePublishResource() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: endpoints.publishResource,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['resources'] });
-      queryClient.invalidateQueries({ queryKey: ['point-account'] });
-    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['resources'] }),
   });
 }
 
@@ -86,10 +77,14 @@ export function useResourceAction() {
       queryClient.invalidateQueries({ queryKey: ['resources'] });
       queryClient.invalidateQueries({ queryKey: ['profile-summary'] });
       queryClient.invalidateQueries({ queryKey: ['resource', String(resource.id)] });
-      queryClient.invalidateQueries({ queryKey: ['point-account'] });
-      queryClient.invalidateQueries({ queryKey: ['point-flows'] });
+      queryClient.invalidateQueries({ queryKey: ['user-favorites'] });
+      queryClient.invalidateQueries({ queryKey: ['user-likes'] });
     },
   });
+}
+
+export function useDownloadAttachment() {
+  return useMutation({ mutationFn: (attachmentId: number) => endpoints.downloadAttachmentFile(attachmentId) });
 }
 
 export function useRateResource() {
@@ -119,11 +114,18 @@ export function usePublishDemand() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: endpoints.publishDemand,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['demands'] }),
+  });
+}
+
+export function useCancelDemand() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => endpoints.cancelDemand(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['demands'] });
-      queryClient.invalidateQueries({ queryKey: ['me'] });
-      queryClient.invalidateQueries({ queryKey: ['point-account'] });
-      queryClient.invalidateQueries({ queryKey: ['point-flows'] });
+      queryClient.invalidateQueries({ queryKey: ['user-requests'] });
+      queryClient.invalidateQueries({ queryKey: ['profile-summary'] });
     },
   });
 }
@@ -131,7 +133,41 @@ export function usePublishDemand() {
 export function useAddComment(kind: 'resources' | 'demands', id: number) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (content: string) => endpoints.addComment(kind, id, content),
+    mutationFn: (values: { content: string; parentId?: number; resourceId?: number; externalUrl?: string }) => endpoints.addComment(kind, id, values),
+    onSuccess: (comment, values) => {
+      const detailKey = [kind === 'resources' ? 'resource' : 'demand', String(id)];
+      queryClient.setQueryData<{ comments: Comment[] }>(detailKey, (current) => {
+        if (!current?.comments) return current;
+        return { ...current, comments: insertComment(current.comments, { ...comment, parentId: comment.parentId || values.parentId }) };
+      });
+      if (kind === 'demands') {
+        queryClient.invalidateQueries({ queryKey: ['demands'] });
+        queryClient.invalidateQueries({ queryKey: ['profile-summary'] });
+      }
+    },
+  });
+}
+
+function insertComment(comments: Comment[], comment: Comment): Comment[] {
+  if (!comment.parentId) {
+    return [comment, ...comments];
+  }
+
+  return comments.map((item) => {
+    if (item.id === comment.parentId) {
+      return { ...item, replies: [...(item.replies || []), comment] };
+    }
+    if (item.replies?.length) {
+      return { ...item, replies: insertComment(item.replies, comment) };
+    }
+    return item;
+  });
+}
+
+export function useDeleteComment(kind: 'resources' | 'demands', id: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (commentId: number) => endpoints.deleteComment(commentId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [kind === 'resources' ? 'resource' : 'demand', String(id)] });
     },
@@ -140,4 +176,44 @@ export function useAddComment(kind: 'resources' | 'demands', id: number) {
 
 export function useReportContent() {
   return useMutation({ mutationFn: endpoints.reportContent });
+}
+
+export function useUserResources(enabled = true) {
+  return useQuery({ queryKey: ['user-resources'], queryFn: () => endpoints.getUserResources({ page: 1, pageSize: 20 }), enabled });
+}
+
+export function useUserRequests(enabled = true) {
+  return useQuery({ queryKey: ['user-requests'], queryFn: () => endpoints.getUserRequests({ page: 1, pageSize: 20 }), enabled });
+}
+
+export function useUserFavorites(enabled = true) {
+  return useQuery({ queryKey: ['user-favorites'], queryFn: () => endpoints.getUserFavorites({ page: 1, pageSize: 20 }), enabled });
+}
+
+export function useUserLikes(enabled = true) {
+  return useQuery({ queryKey: ['user-likes'], queryFn: () => endpoints.getUserLikes({ page: 1, pageSize: 20 }), enabled });
+}
+
+export function useUserLoginRecords(enabled = true) {
+  return useQuery({ queryKey: ['user-login-records'], queryFn: () => endpoints.getUserLoginRecords({ page: 1, pageSize: 20 }), enabled });
+}
+
+export function useNotifications(enabled = true) {
+  return useQuery({ queryKey: ['notifications'], queryFn: () => endpoints.getNotificationMessages({ page: 1, pageSize: 20 }), enabled });
+}
+
+export function useMarkNotificationRead() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: endpoints.markNotificationRead,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['notifications'] }),
+  });
+}
+
+export function useMarkAllNotificationsRead() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: endpoints.markAllNotificationsRead,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['notifications'] }),
+  });
 }
