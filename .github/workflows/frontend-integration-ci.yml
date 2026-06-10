@@ -53,16 +53,21 @@ jobs:
         working-directory: web-user
         run: npx playwright install --with-deps chromium
 
+      - name: Package backend smoke jar
+        working-directory: backend-repo/backend
+        run: |
+          chmod +x ./mvnw
+          ./mvnw -B -DskipTests package
+
       - name: Start backend without database for contract smoke
         working-directory: backend-repo/backend
         env:
           SERVER_PORT: "18080"
           SPRING_CONFIG_ADDITIONAL_LOCATION: "file:${{ github.workspace }}/backend-repo/backend/src/test/resources/application.yml"
         run: |
-          chmod +x ./mvnw
-          nohup ./mvnw -B spring-boot:run > backend-smoke.log 2>&1 &
+          nohup java -jar target/forum-backend-0.1.0-SNAPSHOT.jar > backend-smoke.log 2>&1 &
           echo $! > backend-smoke.pid
-          for i in {1..45}; do
+          for i in {1..60}; do
             if curl -fsS http://127.0.0.1:18080/api/health; then
               exit 0
             fi
