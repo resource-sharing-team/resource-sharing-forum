@@ -25,6 +25,7 @@ import java.util.Map;
 public class AuthService {
     private static final long DEFAULT_ACCOUNT_ID = 1L;
     private static final long DEFAULT_MEMBER_ID = 1L;
+    private static final int MAX_FAILED_LOGIN_COUNT = 5;
     private static final String ACCOUNT_TEMPORARILY_LOCKED = "\u8d26\u53f7\u4e34\u65f6\u9501\u5b9a";
 
     private final TxSupport txSupport;
@@ -84,21 +85,39 @@ public class AuthService {
                     throw new BusinessException(ErrorCode.UNAUTHORIZED, "account disabled");
                 }
                 LocalDateTime lockedUntil = (LocalDateTime) row.get("lockedUntil");
-                if (lockedUntil != null && lockedUntil.isAfter(LocalDateTime.now())) {
-                    recordLogin(jdbc, accountId, account, "FAILED", "ACCOUNT_LOCKED");
+                int failedLoginCount = (int) values.number(row.get("failedLoginCount"), 0L).longValue();
+                LocalDateTime now = LocalDateTime.now();
+                if (lockExpired(status, lockedUntil, now)) {
+                    jdbc.update("""
+                            UPDATE user_account
+                            SET status = 'NORMAL', failed_login_count = 0, locked_until = NULL
+                            WHERE id = ?
+                            """, accountId);
+                    status = "NORMAL";
+                    failedLoginCount = 0;
+                    lockedUntil = null;
+                }
+                if (isLocked(status, lockedUntil, failedLoginCount, now)) {
+                    ensureLockPersisted(jdbc, accountId, lockedUntil);
+                    recordLogin(jdbc, accountId, account, "LOCKED", "ACCOUNT_LOCKED");
                     throw new BusinessException(ErrorCode.UNAUTHORIZED, ACCOUNT_TEMPORARILY_LOCKED);
                 }
                 String hash = String.valueOf(row.get("passwordHash"));
                 if (!passwordEncoder.matches(password, hash)) {
-                    int nextFailCount = (int) values.number(row.get("failedLoginCount"), 0L).longValue() + 1;
+                    int nextFailCount = failedLoginCount + 1;
                     jdbc.update("""
                             UPDATE user_account
                             SET failed_login_count = ?,
-                                locked_until = IF(? >= 5, DATE_ADD(NOW(3), INTERVAL 10 MINUTE), locked_until)
+                                status = IF(? >= ?, 'LOCKED', status),
+                                locked_until = IF(? >= ?, DATE_ADD(NOW(3), INTERVAL 10 MINUTE), locked_until)
                             WHERE id = ?
-                            """, nextFailCount, nextFailCount, accountId);
-                    recordLogin(jdbc, accountId, account, "FAILED", "PASSWORD_ERROR");
-                    throw new BusinessException(ErrorCode.UNAUTHORIZED, nextFailCount >= 5 ? ACCOUNT_TEMPORARILY_LOCKED : "account or password is incorrect");
+                            """, nextFailCount, nextFailCount, MAX_FAILED_LOGIN_COUNT,
+                            nextFailCount, MAX_FAILED_LOGIN_COUNT, accountId);
+                    boolean lockedByThisAttempt = nextFailCount >= MAX_FAILED_LOGIN_COUNT;
+                    recordLogin(jdbc, accountId, account, lockedByThisAttempt ? "LOCKED" : "FAILED",
+                            lockedByThisAttempt ? "ACCOUNT_LOCKED" : "PASSWORD_ERROR");
+                    throw new BusinessException(ErrorCode.UNAUTHORIZED,
+                            lockedByThisAttempt ? ACCOUNT_TEMPORARILY_LOCKED : "account or password is incorrect");
                 }
                 jdbc.update("""
                         UPDATE user_account
@@ -114,6 +133,26 @@ public class AuthService {
                 throw new BusinessException(ErrorCode.UNAUTHORIZED, "account or password is incorrect");
             }
         });
+    }
+
+    private boolean isLocked(String status, LocalDateTime lockedUntil, int failedLoginCount, LocalDateTime now) {
+        return "LOCKED".equals(status)
+                || (lockedUntil != null && lockedUntil.isAfter(now))
+                || failedLoginCount >= MAX_FAILED_LOGIN_COUNT;
+    }
+
+    private boolean lockExpired(String status, LocalDateTime lockedUntil, LocalDateTime now) {
+        return "LOCKED".equals(status) && lockedUntil != null && !lockedUntil.isAfter(now);
+    }
+
+    private void ensureLockPersisted(JdbcTemplate jdbc, Long accountId, LocalDateTime lockedUntil) {
+        jdbc.update("""
+                UPDATE user_account
+                SET status = 'LOCKED',
+                    failed_login_count = GREATEST(failed_login_count, ?),
+                    locked_until = IF(? IS NULL OR ? <= NOW(3), DATE_ADD(NOW(3), INTERVAL 10 MINUTE), locked_until)
+                WHERE id = ?
+                """, MAX_FAILED_LOGIN_COUNT, lockedUntil, lockedUntil, accountId);
     }
 
     public Map<String, Object> register(Map<String, Object> request) {

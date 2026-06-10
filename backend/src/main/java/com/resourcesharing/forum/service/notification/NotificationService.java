@@ -30,7 +30,7 @@ public class NotificationService {
         if (jdbc == null) {
             return new PageResult<>(0, List.of(), page, size);
         }
-        Long memberId = requireNotificationMemberId(accountId);
+        Long memberId = lookup.requireMemberId(accountId);
         long total = jdbc.queryForObject("""
                 SELECT COUNT(*)
                 FROM system_notice
@@ -61,7 +61,7 @@ public class NotificationService {
         if (jdbc == null) {
             return 0;
         }
-        Long memberId = requireNotificationMemberId(accountId);
+        Long memberId = lookup.requireMemberId(accountId);
         Integer count = jdbc.queryForObject("""
                 SELECT COUNT(*)
                 FROM system_notice
@@ -75,7 +75,7 @@ public class NotificationService {
         if (jdbc == null) {
             return;
         }
-        Long memberId = requireNotificationMemberId(accountId);
+        Long memberId = lookup.requireMemberId(accountId);
         int updated = jdbc.update("""
                 UPDATE system_notice
                 SET is_read = 1, read_time = COALESCE(read_time, NOW(3))
@@ -91,7 +91,7 @@ public class NotificationService {
         if (jdbc == null) {
             return;
         }
-        Long memberId = requireNotificationMemberId(accountId);
+        Long memberId = lookup.requireMemberId(accountId);
         jdbc.update("""
                 UPDATE system_notice
                 SET is_read = 1, read_time = COALESCE(read_time, NOW(3))
@@ -110,14 +110,4 @@ public class NotificationService {
                 """, eventId, receiverMemberId, type, title, content, targetType, targetId);
     }
 
-    private Long requireNotificationMemberId(Long accountId) {
-        if (accountId == null) {
-            throw new BusinessException(ErrorCode.UNAUTHORIZED, "Please log in before viewing notifications");
-        }
-        Long memberId = lookup.memberId(accountId);
-        if (memberId == null) {
-            throw new BusinessException(ErrorCode.UNAUTHORIZED, "Account is not a normal member or does not exist");
-        }
-        return memberId;
-    }
 }
